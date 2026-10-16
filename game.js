@@ -51,11 +51,11 @@
     k: '#3a1a10', c: '#f4e6cf', cs: '#d9c2a2',                   // obstacles: dark outline, cream ink, cream shade
     b: '#4a2414', b2: '#8a5a3e', dl: '#e3a27c',                  // HUD brown, HI brown, light dust
     w: '#ece8e4', x: '#ffffff',                                   // vapor light, vapor core
-    // car (Higgsfield lime)
-    o: '#22261a', O: '#363c27',
-    V: '#efffa6', A: '#d1fe17', a: '#b7e012', d: '#9dc20f', D: '#5e7508',
-    q: '#1b1f16', Q: '#3d4632', G: '#6f7a62',
-    t: '#262321', T: '#3a3532', n: '#8a8580', N: '#c4bdb6',
+    // car (pearl white, black canopy and sill, dark aero wheels)
+    o: '#17191c', O: '#1f2226',
+    V: '#ffffff', A: '#f2f2ee', a: '#c9ccd0', d: '#adb1b6', D: '#8e949b',
+    q: '#121417', Q: '#2a2e33', G: '#4b5159',
+    t: '#1b1c1e', T: '#2b2d30', n: '#33363b', N: '#5a6068',
     X: '#ffffff', Z: '#c0282f',
     // straw-blond hairpiece
     L: '#fff3c4', Y: '#f3cf63', y: '#d7a838', h: '#9a6a1e', H: '#4b2c12',
@@ -154,7 +154,8 @@
     for (let x = 4; x <= 74; x++) { const y = 14 + squat; if (g[y] && g[y][x] && g[y][x] !== 'o' && y > top(x) + 1) g[y][x] = 'V'; }
     for (let x = 22; x <= 29; x++) for (let y = 15 + squat; y <= 17 + squat; y++) if (g[y] && g[y][x] && g[y][x] !== 'o') g[y][x] = x === 22 || y === 15 + squat ? 'o' : 'D';
     for (let y = belt; y <= sill - 2; y++) if (g[y] && g[y][53] && g[y][53] !== 'o') g[y][53] = 'd';
-    for (let x = 3; x <= 76; x++) if (g[sill][x] && g[sill][x] !== 'o') g[sill][x] = 'O';
+    for (let x = 3; x <= 76; x++) for (const yy of [sill - 1, sill]) if (g[yy][x] && g[yy][x] !== 'o' && !WHEELS.some(cx => Math.abs(x - cx) < WR + 1.6)) g[yy][x] = 'O';
+    for (let x = 2; x <= 9; x++) if (g[sill - 2][x] && g[sill - 2][x] !== 'o') g[sill - 2][x] = 'O';   // rear diffuser
     // slim headlight, thin red tail light
     for (let x = 73; x <= 76; x++) set(LAMP_ROW + squat, x, lamp ? 'X' : 'N');
     for (let x = 1; x <= 4; x++) set(12 + squat, x, 'Z');
@@ -320,6 +321,10 @@
     'O': ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
     'V': ['#...#', '#...#', '#...#', '#...#', '#...#', '.#.#.', '..#..'],
     'R': ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
+    'F': ['#####', '#....', '#....', '####.', '#....', '#....', '#....'],
+    'L': ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
+    'P': ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+    '+': ['.....', '..#..', '..#..', '#####', '..#..', '..#..', '.....'],
   };
 
   // ---------- canvas & layout ----------
@@ -464,26 +469,40 @@
 
   // ---------- hero physics (pure; shared by game and autopilot) ----------
   const GROUND_Y = GROUND + 1 - STAND_H;
-  const newHero = () => ({ y: GROUND_Y, vy: 0, jumping: false, reachedMin: false, released: false, speedDrop: false, ducking: false });
+  const FLIP_FRAMES = 27;   // ~0.45 s, 8 rotation steps of 45°
+  const newHero = () => ({ y: GROUND_Y, vy: 0, jumping: false, reachedMin: false, released: false, speedDrop: false, ducking: false, flipT: -1, flipUsed: false, flipDone: false, flipCrash: false });
+  function heroFlip(h) {
+    if (!h.jumping || h.flipT >= 0 || h.flipUsed || h.speedDrop) return false;
+    h.flipT = 0; h.flipUsed = true; h.vy = Math.max(h.vy - 3.4, -9.5);   // thrusters add a little extra air
+    return true;
+  }
+  const flipAngle = h => h.flipT < 0 ? 0 : -Math.floor(h.flipT * 8 / FLIP_FRAMES) * Math.PI / 4;
   function heroJump(h, speed) {
     if (h.jumping || h.ducking) return false;
+    h.flipT = -1; h.flipUsed = false; h.flipDone = false; h.flipCrash = false;
     h.jumping = true; h.reachedMin = false; h.released = false; h.speedDrop = false; h.vy = JUMP_V - speed / 10; return true;
   }
   function heroEndJump(h) { h.released = true; if (h.reachedMin && h.vy < DROP_V) h.vy = DROP_V; }
   function heroDuck(h, on) {
-    if (on) { if (h.jumping) { if (!h.speedDrop) { h.speedDrop = true; h.vy = 1; } } else h.ducking = true; }
+    if (on) { if (h.jumping) { if (!h.speedDrop && h.flipT < 0) { h.speedDrop = true; h.vy = 1; } } else h.ducking = true; }
     else { h.ducking = false; h.speedDrop = false; }
   }
   function heroStep(h) {
     if (!h.jumping) return false;
+    if (h.flipT >= 0 && ++h.flipT >= FLIP_FRAMES) { h.flipT = -1; h.flipDone = true; }
     h.y += Math.round(h.speedDrop ? h.vy * DROP_COEF : h.vy);
     h.vy += GRAVITY;
     if (h.y < GROUND_Y - MIN_JUMP || h.speedDrop) h.reachedMin = true;
     if (h.y < GROUND_Y - MAX_JUMP || h.speedDrop || h.released) heroEndJump(h);
-    if (h.y > GROUND_Y) { h.y = GROUND_Y; h.jumping = false; h.vy = 0; h.reachedMin = false; const sd = h.speedDrop; h.speedDrop = false; if (sd) h.ducking = true; return true; }
+    if (h.y > GROUND_Y) { if (h.flipT >= 0) { h.flipCrash = true; h.flipT = -1; } h.y = GROUND_Y; h.jumping = false; h.vy = 0; h.reachedMin = false; const sd = h.speedDrop; h.speedDrop = false; if (sd) h.ducking = true; return true; }
     return false;
   }
   function heroBoxes(h) {
+    if (h.flipT >= 0) {   // rotated bounding box of the car, shrunk to stay forgiving
+      const a = flipAngle(h), c = Math.abs(Math.cos(a)), sn = Math.abs(Math.sin(a));
+      const bw = (c * HERO_W + sn * STAND_H) * 0.72, bh = (sn * HERO_W + c * STAND_H) * 0.72, cx = HERO_X + HERO_W / 2, cy = h.y + STAND_H / 2;
+      return [[cx - bw / 2, cy - bh / 2, bw, bh]];
+    }
     if (h.ducking && !h.jumping) { const oy = GROUND + 1 - DUCK_H; return DUCK_BOX.map(([x, y, w, hh]) => [HERO_X + x, oy + y, w, hh]); }
     return HERO_BOX.map(([x, y, w, hh]) => [HERO_X + x, h.y + y, w, hh]);
   }
@@ -511,7 +530,7 @@
       obstacles: [], lastTypes: [], parts: [], blobs: [], devils: [],
       night: false, nightFrames: 0, nextNight: NIGHT_EVERY, stars: [], moon: 0,
       flash: 0, jumpHeld: false, duckHeld: false, plan: null, squash: 0, shake: 0, boom: null,
-      hitStop: 0, hitFlash: 0, knock: 0, knockV: 0, tilt: 0, jumpAge: 0, retro: 0,
+      hitStop: 0, hitFlash: 0, knock: 0, knockV: 0, tilt: 0, jumpAge: 0, retro: 0, bonus: 0, popups: [], flipJet: 0, botGround: 0, botNextFlip: 2,
     };
     const r = mulberry(SEED ^ 0xc10d);
     G.devils.push({ x: 260 + r() * 150, h: 16 + Math.floor(r() * 8), ph: r() * 6 });
@@ -522,7 +541,10 @@
     G.stars = [];
     for (let i = 0; i < 26; i++) G.stars.push({ x: Math.floor(r() * 1100), y: 8 + Math.floor(r() * (GROUND - 90)), tw: Math.floor(r() * 120), big: r() < 0.2 });
   }
-  function start() { if (G.mode !== 'intro') return; G.mode = 'play'; G.playFrames = 0; doJump(); }
+  function start() {
+    if (G.mode !== 'intro') return; G.mode = 'play'; G.playFrames = 0; doJump();
+    if (BOT) { G.plan = { kind: 'jump', hold: 60, flip: 3, f: 0 }; }   // the bot always flips its first jump
+  }
   function restart() { newGame(false); }
   // compressed-air vapor: metaball blobs rendered as a dithered pixel cloud with an ink outline
   function blob(x, y, vx, vy, r0, r1, grow, max, dens, kind = 'vapor', drift = 0.3) {
@@ -557,7 +579,13 @@
       billow(x + dir * 3, GROUND - 3, dir * (1 + fxRng() * 1.6), -0.15, 4, 9 + fxRng() * 4, 6, 30 + fxRng() * 10, 1.2);
     }
   }
+  function doFlip() {
+    if (!heroFlip(G.hero)) return;
+    ev('flip'); G.flipJet = 6; G.retro = 0;
+    if (AC) { tone(260, 520, 0.12, 'square', 0.35); noise(0.14, 0.4, 3000); }
+  }
   function doJump() {
+    if (G.mode === 'play' && G.hero.jumping) { doFlip(); return; }   // second tap while airborne = backflip
     if (heroJump(G.hero, G.speed)) {
       G.jumpAge = 0; G.retro = 0;
       SFX.jump(); ev('jump');
@@ -634,6 +662,7 @@
   const POLICIES = [];
   [1, 4, 8, 12, 18, 60].forEach(k => POLICIES.push({ kind: 'jump', hold: k }));
   [16, 20, 24, 28].forEach(d => POLICIES.push({ kind: 'jump', hold: 60, drop: d }));
+  [[60, 3], [60, 6], [60, 9], [18, 4], [12, 6], [60, 12]].forEach(([k, fl]) => POLICIES.push({ kind: 'jump', hold: k, flip: fl }));
   POLICIES.push({ kind: 'duck' });
   function simulate(delay, pol, horizon, tIdx) {
     const h = Object.assign({}, G.hero);
@@ -653,8 +682,10 @@
       }
       if (pol && pol.kind === 'jump' && f === delay + pol.hold) heroEndJump(h);
       if (pol && pol.drop && f === delay + pol.drop) heroDuck(h, true);
+      if (pol && pol.flip && f === delay + pol.flip && !heroFlip(h)) return { safe: false, t: f };
       if (pol && pol.kind === 'duck' && f === duckUntil) heroDuck(h, false);
       const landed = heroStep(h);
+      if (landed && h.flipCrash) return { safe: false, t: f };
       if (landed && pol && pol.kind === 'jump' && f > delay) { activeUntil = f; if (h.ducking) releaseDuckAt = f + 1; }
       speed = Math.min(SPEED_MAX, speed + ACCEL);
       const hb = heroBoxes(h);
@@ -677,6 +708,7 @@
       if (p.kind === 'jump') {
         if (p.f === p.hold) releaseJump();
         if (p.drop && p.f === p.drop) pressDuck();
+        if (p.flip && p.f === p.flip) pressJump();
         if (!h.jumping && p.f > 1) { if (G.duckHeld) releaseDuck(); if (G.jumpHeld) releaseJump(); G.plan = null; }
       } else if (p.kind === 'duck') { if (p.f >= p.until) { releaseDuck(); G.plan = null; } }
       if (G.plan || h.jumping) return;
@@ -694,7 +726,14 @@
     const duck = options.find(p => p.kind === 'duck');
     let pick;
     if (duck && (target.type.flying || options.length === 1)) pick = duck;
-    else { const jumps = options.filter(p => p.kind === 'jump' && !p.drop); pick = jumps.length ? jumps[Math.min(jumps.length - 1, botRng() < 0.7 ? 0 : 1)] : options[0]; }
+    else {
+      // backflip over roughly every 2nd–3rd ground obstacle when a flip line is safe
+      if (target.wantFlip === undefined) { G.botGround = (G.botGround || 0) + 1; target.wantFlip = !target.type.flying && G.botGround >= G.botNextFlip; }
+      const flips = target.wantFlip ? options.filter(p => p.flip) : [];
+      const jumps = options.filter(p => p.kind === 'jump' && !p.drop && !p.flip);
+      if (flips.length) { pick = flips[0]; G.botGround = 0; G.botNextFlip = 2 + (botRng() < 0.5 ? 1 : 0); }
+      else pick = jumps.length ? jumps[Math.min(jumps.length - 1, botRng() < 0.7 ? 0 : 1)] : options[0];
+    }
     G.plan = Object.assign({ f: 0 }, pick);
     if (pick.kind === 'jump') { pressJump(); if (pick.hold <= 0) releaseJump(); }
     else {
@@ -741,11 +780,14 @@
       G.jumpAge++;
       const belly = h.y + NOZ_TIP;
       if (G.jumpAge <= 9) jetColumn(belly, 1.4);
-      else if (!G.retro && h.vy > 0 && GROUND_Y - h.y < 24 + h.vy * 2) G.retro = 7;
+      if (G.flipJet > 0) { G.flipJet--; for (let i = 0; i < 3; i++) blob(HERO_X + 40 + (fxRng() - 0.5) * 30, h.y + STAND_H / 2 + (fxRng() - 0.5) * 12, (fxRng() - 0.5) * 1.6, 1.6 + fxRng(), 3, 7 + fxRng() * 3, 4, 18, 1.3, 'vapor', 0.3); }
+      else if (!G.retro && h.flipT < 0 && h.vy > 0 && GROUND_Y - h.y < 24 + h.vy * 2) G.retro = 7;
       if (G.retro > 1) { G.retro--; jetColumn(belly, 1.25); }
       else if (G.jumpAge > 9 && G.playFrames % 2 === 0) for (const nx of NOZ) blob(HERO_X + nx, belly + 2, -0.2, 1.0, 1.5, 4, 6, 14, 0.85, 'wisp');
     }
     const landed = heroStep(h);
+    if (h.flipDone) { h.flipDone = false; G.bonus += 50; G.popups.push({ x: HERO_X + 22, y: Math.round(h.y) - 14, f: 0 }); ev('flip50'); if (AC) tone(1175, 1568, 0.12, 'square', 0.35); }
+    if (landed && h.flipCrash) { h.flipCrash = false; gameOver({ x: HERO_X + 44 }); return; }   // landed mid-rotation
     if (landed) {
       if (!G.duckHeld) h.ducking = false;
       G.squash = 7; G.retro = 0;
@@ -772,13 +814,16 @@
       if (hit(hb, obBoxes(o))) { gameOver(o); return; }
     }
 
-    const sc = Math.floor(G.dist * SCORE_COEF);
+    const sc = Math.floor(G.dist * SCORE_COEF) + G.bonus;
     if (sc !== G.score) {
+      const m = Math.floor(sc / 100) * 100;
       G.score = sc;
-      if (sc > 0 && sc % 100 === 0 && sc !== G.lastMilestone) { G.lastMilestone = sc; G.flash = 60; SFX.point(); ev('point100'); }
+      if (m > 0 && m > G.lastMilestone) { G.lastMilestone = m; G.flash = 60; SFX.point(); ev('point100'); }
       if (sc >= G.nextNight) { G.nextNight += NIGHT_EVERY; G.night = true; G.nightFrames = NIGHT_FRAMES; G.moon = (G.moon + 1) % 4; makeStars(); }
     }
     if (G.flash > 0) G.flash--;
+    for (const pu of G.popups) pu.f++;
+    G.popups = G.popups.filter(pu => pu.f < 60);
     if (G.night) { G.nightFrames--; if (G.nightFrames <= 0) G.night = false; }
 
     for (const dv of G.devils) { dv.x -= sp * 0.1 + 0.15; dv.ph += 0.25; }
@@ -810,7 +855,8 @@
     G.mode = 'over'; G.deadFrames = 0; G.plan = null; h.ducking = false;
     SFX.crash(); ev('crash');
     G.shake = 14; G.hitStop = 3; G.hitFlash = 2;
-    h.vy = Math.min(h.vy, 0) - 3.6; h.jumping = false; G.knockV = -1.6; G.knock = 0; G.tilt = -0.28;
+    const fa = flipAngle(h); h.flipT = -1;
+    h.vy = Math.min(h.vy, 0) - 3.6; h.jumping = false; G.knockV = -1.6; G.knock = 0; G.tilt = fa ? (((fa % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI : -0.28;
     const cx = Math.max(HERO_X + HERO_W - 6, o.x + 4), cy = Math.min(h.y + 12, GROUND - 8);
     G.boom = { x: cx, y: cy, f: 0 };
     for (let i = 0; i < 5; i++) blob(cx - 6 + fxRng() * 10, cy + (fxRng() - 0.5) * 8, -0.5 - fxRng() * 1.5, -0.6 + fxRng() * 0.8, 3, 10 + fxRng() * 6, 7, 46 + fxRng() * 16, 1.2, 'vapor', 0);
@@ -852,7 +898,7 @@
     }
     b.putImageData(img, 0, 0);
   }
-  const VAPC = { k: RGB.k, g: hex('#c4bcb6'), l: hex('#ece8e4'), w: RGB.w, x: RGB.x };
+  const VAPC = { k: hex('#9ea3a9'), g: hex('#c4bcb6'), l: hex('#ece8e4'), w: RGB.w, x: RGB.x };
   const DUSTC = { k: RGB.R, g: RGB.hl, l: RGB.dl, w: RGB.hz, x: RGB.dl };
   const vapor0 = kind => kind === 'dust' ? DUSTC : VAPC;
   function drawBlobs(kind, nightAware, ne) {
@@ -978,6 +1024,7 @@
       if (show) text(pad(val), sx, HUDM, PAL.b);
       if (hiScore > 0) { text('HI', sx - 12 * 9, HUDM, PAL.b2); text(pad(hiScore), sx - 12 * 6.5, HUDM, PAL.b2); }
     }
+    for (const pu of G.popups) if (pu.f < 44 || (pu.f >> 2) % 2) text('+50 FLIP', pu.x, pu.y - Math.round(Math.min(pu.f, 30) * 0.6), PAL.b);
     if (G.mode === 'over' && G.deadFrames >= 18) {   // GAME OVER lands ~0.3 s after the impact
       const gx = Math.round(W / 2 - (9 * 12 - 2) / 2), gy = Math.round(GROUND * 0.34);
       text('GAME OVER', gx, gy, PAL.b);
@@ -1026,6 +1073,10 @@
     if (G.mode === 'over' && Math.abs(G.tilt) > 0.01) {          // crash tilt around the rear wheel
       const pvx = hx + WHEELS[0], pvy = hy + spr.h - 1;
       b.save(); b.translate(pvx, pvy); b.rotate(G.tilt); b.drawImage(spr.c, Math.round(hx - pvx), Math.round(hy - pvy)); b.restore();
+    } else if (h.flipT >= 0) {                                   // backflip: 8 crisp 45° steps around the car's centre
+      const pvx = hx + spr.w / 2, pvy = hy + spr.h / 2;
+      b.imageSmoothingEnabled = false;
+      b.save(); b.translate(Math.round(pvx), Math.round(pvy)); b.rotate(flipAngle(h)); b.drawImage(spr.c, -Math.round(spr.w / 2), -Math.round(spr.h / 2)); b.restore();
     } else drawSprite(spr, hx, hy);
     // night headlight beam
     if (t > 0.5 && G.mode !== 'over') {
@@ -1072,7 +1123,7 @@
   window.__state = () => ({ score: G.score, speed: +G.speed.toFixed(3), alive: G.mode !== 'over', night: !!G.night, mode: G.mode, hi: hiScore });
   window.__time = () => +(REC ? stepTime : simTime).toFixed(4);
   window.__events = () => EVENTS.slice();
-  window.__start = () => { if (G.mode === 'intro') { start(); G.jumpHeld = false; heroEndJump(G.hero); } if (REC) render(); return window.__state(); };
+  window.__start = () => { if (G.mode === 'intro') { start(); if (!BOT) { G.jumpHeld = false; heroEndJump(G.hero); } } if (REC) render(); return window.__state(); };
   window.__bot = (on) => {
     BOT = on === undefined ? !BOT : !!on;
     if (!BOT && G) { G.plan = null; if (G.jumpHeld) releaseJump(); if (G.duckHeld) releaseDuck(); }
