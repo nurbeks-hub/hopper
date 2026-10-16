@@ -56,7 +56,7 @@
     V: '#ffffff', A: '#f2f2ee', a: '#c9ccd0', d: '#adb1b6', D: '#8e949b',
     q: '#121417', Q: '#2a2e33', G: '#4b5159',
     t: '#1b1c1e', T: '#2b2d30', n: '#33363b', N: '#5a6068',
-    X: '#ffffff', Z: '#c0282f',
+    X: '#ffffff', Z: '#c0282f', cy: '#9ff4ff', cy2: '#5fd6ee',
     // straw-blond hairpiece
     L: '#fff3c4', Y: '#f3cf63', y: '#d7a838', h: '#9a6a1e', H: '#4b2c12',
   };
@@ -182,6 +182,25 @@
     return g;
   }
   const truckSprite = o => bake('car' + JSON.stringify(o), cropTop(buildTruck(o)));
+  function undersideGrid(phase, glow) {
+    const src = cropTop(buildTruck({ phase })), h = src.length, w = src[0].length, g = grid(w, h);
+    const isWheel = c => c === 't' || c === 'T' || c === 'n' || c === 'N';
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const c = src[h - 1 - y][x]; if (!c) continue;                 // mirrored top-to-bottom: wheels end up on top
+      g[y][x] = isWheel(c) ? c : 'o';
+    }
+    outline(g, 'k', new Set(['o']));
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (g[y][x] === 'k' && y > 0 && g[y - 1][x] && !isWheel(g[y - 1][x])) g[y][x] = 'a'; // body-side lip along the bottom edge
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (g[y][x] === 'o' && (x + y) % 7 === 0) g[y][x] = 'O';   // floor-pan ribs
+    const cy = Math.round(h * 0.55);
+    for (const cx of [20, 33, 46, 59]) for (let y = cy - 3; y <= cy + 3; y++) for (let x = cx - 3; x <= cx + 3; x++) {
+      const d = Math.hypot(x - cx, (y - cy) * 1.2);
+      if (!g[y] || !g[y][x] || isWheel(g[y][x])) continue;
+      if (d <= 1.2) g[y][x] = 'X'; else if (d <= 2.3) g[y][x] = glow ? 'cy' : 'cy2'; else if (d <= 3.2) g[y][x] = 'N';
+    }
+    return g;
+  }
+  const undersideSprite = (phase, glow) => bake('under' + phase + glow, undersideGrid(phase, glow));
   const STAND_G = buildTruck({}), STAND_C = cropTop(STAND_G);
   const DUCK_G = cropTop(buildTruck({ squat: 6, duck: true }));
   const STAND_H = STAND_C.length, DUCK_H = DUCK_G.length;
@@ -321,6 +340,8 @@
     'O': ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
     'V': ['#...#', '#...#', '#...#', '#...#', '#...#', '.#.#.', '..#..'],
     'R': ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
+    'K': ['#...#', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '#...#'],
+    'C': ['.###.', '#...#', '#....', '#....', '#....', '#...#', '.###.'],
     'F': ['#####', '#....', '#....', '####.', '#....', '#....', '#....'],
     'L': ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
     'P': ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
@@ -476,7 +497,12 @@
     h.flipT = 0; h.flipUsed = true; h.vy = Math.max(h.vy - 3.4, -9.5);   // thrusters add a little extra air
     return true;
   }
-  const flipAngle = h => h.flipT < 0 ? 0 : -Math.floor(h.flipT * 8 / FLIP_FRAMES) * Math.PI / 4;
+  const KICK_STEPS = 12;
+  const flipAngle = () => 0;   // the kickflip rolls around the long axis, so there is no pitch to carry into a crash
+  const kickPhase = h => {      // -> { sy: vertical squash 0.15..1, under: showing the underside, bob: px }
+    const st = Math.floor(h.flipT * KICK_STEPS / FLIP_FRAMES), th = (st + 0.5) / KICK_STEPS * Math.PI * 2, c = Math.cos(th);
+    return { sy: Math.max(0.15, Math.abs(c)), under: c < 0, bob: Math.round(Math.sin(st / KICK_STEPS * Math.PI) * 4) };
+  };
   function heroJump(h, speed) {
     if (h.jumping || h.ducking) return false;
     h.flipT = -1; h.flipUsed = false; h.flipDone = false; h.flipCrash = false;
@@ -498,9 +524,8 @@
     return false;
   }
   function heroBoxes(h) {
-    if (h.flipT >= 0) {   // rotated bounding box of the car, shrunk to stay forgiving
-      const a = flipAngle(h), c = Math.abs(Math.cos(a)), sn = Math.abs(Math.sin(a));
-      const bw = (c * HERO_W + sn * STAND_H) * 0.72, bh = (sn * HERO_W + c * STAND_H) * 0.72, cx = HERO_X + HERO_W / 2, cy = h.y + STAND_H / 2;
+    if (h.flipT >= 0) {   // rolling car: a forgiving box around its centre line
+      const bw = HERO_W * 0.78, bh = STAND_H * 0.7, cx = HERO_X + HERO_W / 2, cy = h.y + STAND_H / 2;
       return [[cx - bw / 2, cy - bh / 2, bw, bh]];
     }
     if (h.ducking && !h.jumping) { const oy = GROUND + 1 - DUCK_H; return DUCK_BOX.map(([x, y, w, hh]) => [HERO_X + x, oy + y, w, hh]); }
@@ -585,7 +610,7 @@
     if (AC) { tone(260, 520, 0.12, 'square', 0.35); noise(0.14, 0.4, 3000); }
   }
   function doJump() {
-    if (G.mode === 'play' && G.hero.jumping) { doFlip(); return; }   // second tap while airborne = backflip
+    if (G.mode === 'play' && G.hero.jumping) { doFlip(); return; }   // second tap while airborne = kickflip
     if (heroJump(G.hero, G.speed)) {
       G.jumpAge = 0; G.retro = 0;
       SFX.jump(); ev('jump');
@@ -727,7 +752,7 @@
     let pick;
     if (duck && (target.type.flying || options.length === 1)) pick = duck;
     else {
-      // backflip over roughly every 2nd–3rd ground obstacle when a flip line is safe
+      // kickflip over roughly every 2nd–3rd ground obstacle when a flip line is safe
       if (target.wantFlip === undefined) { G.botGround = (G.botGround || 0) + 1; target.wantFlip = !target.type.flying && G.botGround >= G.botNextFlip; }
       const flips = target.wantFlip ? options.filter(p => p.flip) : [];
       const jumps = options.filter(p => p.kind === 'jump' && !p.drop && !p.flip);
@@ -786,7 +811,7 @@
       else if (G.jumpAge > 9 && G.playFrames % 2 === 0) for (const nx of NOZ) blob(HERO_X + nx, belly + 2, -0.2, 1.0, 1.5, 4, 6, 14, 0.85, 'wisp');
     }
     const landed = heroStep(h);
-    if (h.flipDone) { h.flipDone = false; G.bonus += 50; G.popups.push({ x: HERO_X + 22, y: Math.round(h.y) - 14, f: 0 }); ev('flip50'); if (AC) tone(1175, 1568, 0.12, 'square', 0.35); }
+    if (h.flipDone) { h.flipDone = false; G.bonus += 50; G.popups.push({ x: HERO_X + 6, y: Math.max(HUDM + 24, Math.round(h.y) - 56), f: 0 }); ev('flip50'); if (AC) tone(1175, 1568, 0.12, 'square', 0.35); }
     if (landed && h.flipCrash) { h.flipCrash = false; gameOver({ x: HERO_X + 44 }); return; }   // landed mid-rotation
     if (landed) {
       if (!G.duckHeld) h.ducking = false;
@@ -823,7 +848,7 @@
     }
     if (G.flash > 0) G.flash--;
     for (const pu of G.popups) pu.f++;
-    G.popups = G.popups.filter(pu => pu.f < 60);
+    G.popups = G.popups.filter(pu => pu.f < 42);
     if (G.night) { G.nightFrames--; if (G.nightFrames <= 0) G.night = false; }
 
     for (const dv of G.devils) { dv.x -= sp * 0.1 + 0.15; dv.ph += 0.25; }
@@ -1024,7 +1049,7 @@
       if (show) text(pad(val), sx, HUDM, PAL.b);
       if (hiScore > 0) { text('HI', sx - 12 * 9, HUDM, PAL.b2); text(pad(hiScore), sx - 12 * 6.5, HUDM, PAL.b2); }
     }
-    for (const pu of G.popups) if (pu.f < 44 || (pu.f >> 2) % 2) text('+50 FLIP', pu.x, pu.y - Math.round(Math.min(pu.f, 30) * 0.6), PAL.b);
+    for (const pu of G.popups) if (pu.f < 28 || (pu.f >> 2) % 2) text('+50 KICKFLIP', pu.x, pu.y - Math.round(Math.min(pu.f, 24) * 0.5), PAL.b);
     if (G.mode === 'over' && G.deadFrames >= 18) {   // GAME OVER lands ~0.3 s after the impact
       const gx = Math.round(W / 2 - (9 * 12 - 2) / 2), gy = Math.round(GROUND * 0.34);
       text('GAME OVER', gx, gy, PAL.b);
@@ -1073,10 +1098,11 @@
     if (G.mode === 'over' && Math.abs(G.tilt) > 0.01) {          // crash tilt around the rear wheel
       const pvx = hx + WHEELS[0], pvy = hy + spr.h - 1;
       b.save(); b.translate(pvx, pvy); b.rotate(G.tilt); b.drawImage(spr.c, Math.round(hx - pvx), Math.round(hy - pvy)); b.restore();
-    } else if (h.flipT >= 0) {                                   // backflip: 8 crisp 45° steps around the car's centre
-      const pvx = hx + spr.w / 2, pvy = hy + spr.h / 2;
+    } else if (h.flipT >= 0) {                                   // kickflip: roll around the long axis in 12 crisp frames
+      const k = kickPhase(h), src = k.under ? undersideSprite(phase, (G.frame >> 1) % 2) : spr;
+      const dh = Math.max(3, Math.round(src.h * k.sy)), cyy = Math.round(hy + spr.h / 2) - k.bob;
       b.imageSmoothingEnabled = false;
-      b.save(); b.translate(Math.round(pvx), Math.round(pvy)); b.rotate(flipAngle(h)); b.drawImage(spr.c, -Math.round(spr.w / 2), -Math.round(spr.h / 2)); b.restore();
+      b.drawImage(src.c, 0, 0, src.w, src.h, hx, cyy - (dh >> 1), src.w, dh);
     } else drawSprite(spr, hx, hy);
     // night headlight beam
     if (t > 0.5 && G.mode !== 'over') {
