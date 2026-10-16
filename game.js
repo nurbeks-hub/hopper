@@ -1050,7 +1050,7 @@
 
     const a = G.mode === 'intro' ? 1 : Math.max(0, 1 - G.playFrames / 24);
     msg.style.opacity = a.toFixed(3);
-    hint.style.visibility = BOT ? 'hidden' : 'visible';
+    hint.style.visibility = (BOT && !REC) ? 'hidden' : 'visible';
   }
 
   // ---------- loop ----------
