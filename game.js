@@ -34,37 +34,40 @@
   const GROUND = H - 40;
 
   // ---------- constants (per-frame units at 60 fps) ----------
-  const HERO_X = 40, HERO_W = 64;
+  const HERO_X = 36, HERO_W = 80;
   const STEP = 1 / 60;
   const GRAVITY = 0.6, JUMP_V = -10, DROP_V = -5, MIN_JUMP = 30, MAX_JUMP = 63, DROP_COEF = 3;
   const SPEED0 = 6, SPEED_MAX = 11.5, ACCEL = 0.001;
-  const SCORE_COEF = 0.025, CLEAR_FRAMES = 140, NIGHT_EVERY = 700, NIGHT_FRAMES = 720, GAP_COEF = 0.6, MAX_GAP_COEF = 1.5;
+  const SCORE_COEF = 0.025, CLEAR_FRAMES = 20, NIGHT_EVERY = 700, NIGHT_FRAMES = 720, GAP_COEF = 0.6, MAX_GAP_COEF = 1.5;
   const WIG_AFTER = REC ? 330 : 700; // frames of play before wigs may appear
 
-  // ---------- palette: monochrome world, lime hero ----------
+  // ---------- palette: flat Mars (5 tones), lime hero, golden hairpieces ----------
   const PAL = {
-    k: '#535353',  // ink
-    g: '#acacac',  // secondary grey
-    l: '#dadada',  // light grey (clouds, vapor shading)
-    w: '#f7f7f7',  // background
+    w: '#efcfae',  // dusty butterscotch sky / background
+    k: '#6e2f1f',  // dark rust ink (obstacles, HUD)
+    u: '#a8472c',  // rust-red ground line and pebbles
+    g: '#d29a76',  // pale rust for far outlines
+    l: '#f8e4cc',  // light dust (clouds, dust puffs)
+    s: '#fbf3e6',  // small pale sun
     x: '#ffffff',  // vapor core
-    // pickup (Higgsfield lime)
-    o: '#23271a', O: '#363c27',            // outline, trim
-    V: '#efffa6', A: '#d1fe17', a: '#b7e012', d: '#9dc20f', D: '#5e7508', // specular → deep shade
-    q: '#1b1f16', Q: '#3d4632', G: '#6f7a62', // window glass, glass top, glare
-    t: '#262626', T: '#3a3a3a', n: '#8a8a8a', N: '#c4c4c4', // tyre, sidewall, rim, rim highlight
-    X: '#ffffff', Z: '#7a1d1d',
+    // car (Higgsfield lime)
+    o: '#22261a', O: '#363c27',
+    V: '#efffa6', A: '#d1fe17', a: '#b7e012', d: '#9dc20f', D: '#5e7508',
+    q: '#1b1f16', Q: '#3d4632', G: '#6f7a62',
+    t: '#262321', T: '#3a3532', n: '#8a8580', N: '#c4bdb6',
+    X: '#ffffff', Z: '#c0282f',
+    // straw-blond hairpiece
+    L: '#fff3c4', Y: '#f3cf63', y: '#d7a838', h: '#9a6a1e', H: '#4b2c12',
   };
-  const BG = '#f7f7f7', INK = '#535353';
   const hex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
   const RGB = {}; for (const k in PAL) RGB[k] = hex(PAL[k]);
-  // night = invert + lift (like the original page): v -> (255 - v) + 26
-  const NIGHT_LIFT = 26;
-  const inv = c => c.map(v => Math.min(255, 255 - v + NIGHT_LIFT));
   const css = c => `rgb(${c[0]},${c[1]},${c[2]})`;
-  const NIGHT_BG = css(inv(hex(BG))), NIGHT_INK = css(inv(hex(INK)));
+  const lerpC = (a, b, t) => [0, 1, 2].map(i => Math.round(a[i] + (b[i] - a[i]) * t));
+  // night: the same five tones, faded in steps toward a maroon-to-black sky (the hero and hair keep their colours)
+  const NIGHT = { k: hex('#e4a98c'), u: hex('#b45a3e'), g: hex('#7a3a30'), l: hex('#4a2023') };
+  const SKY_TOP = hex('#0b0507'), SKY_HOR = hex('#3d1619'), SOIL_N = hex('#1a0b0c');
+  const NSTEP = 7;
   let nightMix = 0;
-
   // ---------- pixel grids ----------
   function grid(w, h) { return Array.from({ length: h }, () => new Array(w).fill(null)); }
   function outline(g, ch, onlySet) {
@@ -107,84 +110,76 @@
     return out;
   }
 
-  // ---------- hero: original pickup (lime, the only colour in the world) ----------
-  const TRW = 64, TRH = 32, WHEELS = [14, 50], WCY = 24, WR = 7.4, NOZ = [27, 37], BELT0 = 12, SILL0 = 25;
-  function buildTruck({ phase = 0, drop = 0, cabDrop = 0, thrust = false, dead = false, lamp = true, white = false }) {
+  // ---------- hero: low two-seat electric roadster (lime, our own detailing) ----------
+  const TRW = 80, TRH = 27, WHEELS = [16, 62], WCY = 20, WR = 6.6, NOZ = [34, 46], SILL0 = 20, LAMP_ROW = 16;
+  function topAt(x) {                                       // standing body/cabin profile
+    if (x <= 1) return 12;
+    if (x <= 22) return 11;                                // short tail deck
+    if (x <= 30) return Math.round(11 - (x - 22) * 6 / 8); // fastback rear glass
+    if (x <= 41) return 5;                                 // low removable roof
+    if (x <= 52) return Math.round(5 + (x - 41) * 7 / 11); // raked windshield
+    if (x <= 75) return Math.round(12 + (x - 52) * 3 / 23); // long low nose
+    return 15 + (x - 75);
+  }
+  function buildTruck({ phase = 0, squat = 0, duck = false, thrust = false, dead = false, lamp = true, white = false }) {
     const g = grid(TRW, TRH);
-    const belt = BELT0 + drop, sill = Math.min(SILL0 + drop, 28), roof = 3 + drop + cabDrop;
-    const cabL = 28, cabR = 43, wsX = 53;
-    const edge = y => Math.floor(cabR + (y - roof) * (wsX - cabR) / Math.max(1, belt - roof));
+    const sill = Math.min(SILL0 + squat, TRH - 1);
+    const top = x => (duck && x >= 23 && x <= 52 ? Math.max(topAt(x), 8) : topAt(x)) + squat;
     const set = (y, x, c) => { if (y >= 0 && y < TRH && x >= 0 && x < TRW) g[y][x] = c; };
-    // lower body: 5-tone metallic ramp with a crisp specular line on the shoulder
-    for (let y = belt; y <= sill; y++) for (let x = 1; x <= 62; x++) {
-      if (y === belt && (x === 1 || x >= 61)) continue;
-      if (y === belt + 1 && x === 62) continue;
-      if (y === sill && (x === 1 || x === 62)) continue;
-      const r = y - belt;
-      g[y][x] = r <= 1 ? 'A' : r === 2 ? 'V' : r <= 4 ? 'A' : r <= 6 ? 'a' : r === 7 ? 'D' : r <= 10 ? 'd' : 'D';
+    for (let x = 1; x <= 78; x++) for (let y = top(x); y <= sill; y++) {
+      if (y === sill && (x <= 2 || x >= 77)) continue;
+      const d = y - top(x);
+      g[y][x] = d <= 1 ? 'V' : d <= 3 ? 'A' : d <= 5 ? 'a' : d <= 7 ? 'd' : 'D';
     }
-    // cab with raked windshield
-    for (let y = roof; y < belt; y++) for (let x = cabL; x <= edge(y); x++) {
-      if (y === roof && (x <= cabL + 1 || x >= edge(y) - 1)) continue;
-      if (y === roof + 1 && x === cabL) continue;
-      g[y][x] = y <= roof + 1 ? 'V' : 'A';
-    }
-    // wheel arches
-    for (const cx of WHEELS) for (let y = belt + 1; y < TRH; y++) for (let x = 0; x < TRW; x++) if (Math.hypot(x - cx, y - WCY) < 9.2) g[y][x] = null;
+    // wheel arches (wheels sit flush)
+    for (const cx of WHEELS) for (let y = 0; y < TRH; y++) for (let x = 0; x < TRW; x++) if (Math.hypot(x - cx, y - WCY) < WR + 1.4 && y > top(x) + 3) g[y][x] = null;
     outline(g, 'o');
-    // dark glass, B-pillar
-    for (let y = roof + 2; y <= belt - 2; y++) for (let x = cabL + 2; x <= edge(y) - 2; x++) {
-      if (x === 39 || x === 40) { g[y][x] = 'O'; continue; }
-      g[y][x] = y === roof + 2 ? 'Q' : 'q';
-      if (!dead && ((x - y * 1.4 + 300) % 14) < 1.2) g[y][x] = 'G';
-    }
-    if (dead) for (const [x, y] of [[33, 1], [34, 2], [35, 2], [36, 3], [35, 4], [45, 1], [46, 2], [47, 3], [48, 3], [47, 4]]) if (roof + 2 + y <= belt - 2) g[roof + 2 + y][x] = 'N';
-    // charcoal trim: fender flares, rocker, bumpers, bed/cab gap, handle
-    for (let y = belt + 1; y <= sill; y++) for (let x = 0; x < TRW; x++) {
+    // dark glass with a black targa roof panel
+    const belt = 11 + squat;
+    for (let x = 24; x <= 51; x++) for (let y = top(x) + 1; y < belt; y++) {
       if (!g[y][x] || g[y][x] === 'o') continue;
-      if (WHEELS.some(cx => { const d = Math.hypot(x - cx, y - WCY); return d >= 9.2 && d < 10.3; })) g[y][x] = 'O';
+      g[y][x] = y === top(x) + 1 ? 'Q' : 'q';
+      if (!dead && ((x - y * 1.6 + 300) % 13) < 1.2) g[y][x] = 'G';
+      if (x === 31) g[y][x] = 'O';
     }
-    for (let x = 2; x <= 61; x++) if (g[sill][x] && g[sill][x] !== 'o') g[sill][x] = 'O';
-    for (let y = belt + 1; y <= sill - 2; y++) if (g[y][27] && g[y][27] !== 'o') g[y][27] = 'o';
-    for (let y = belt + 3; y <= sill - 3; y++) if (g[y][41] && g[y][41] !== 'o' && g[y][41] !== 'O') g[y][41] = 'D';
-    set(belt + 4, 43, 'O'); set(belt + 4, 44, 'O');
-    for (let x = 59; x <= 63; x++) { set(sill - 1, x, x === 63 ? 'o' : 'O'); set(sill, x, 'o'); }
-    for (let x = 0; x <= 2; x++) { set(sill - 1, x, 'O'); set(sill, x, 'o'); }
-    for (let y = belt + 4; y <= belt + 7; y++) set(y, 62, 'O');
-    // small white headlight, thin red tail light
-    set(belt + 2, 61, lamp ? 'X' : 'N'); set(belt + 2, 62, lamp ? 'X' : 'N'); set(belt + 3, 62, lamp ? 'X' : 'N');
-    for (let y = belt + 1; y <= belt + 4; y++) set(y, 1, 'Z');
-    // chassis rail + air nozzles
-    for (let x = 21; x <= 43; x++) set(sill + 1, x, 'o');
+    for (let x = 31; x <= 41; x++) set(top(x) + 1, x, 'O');
+    if (dead) for (const [x, y] of [[36, 0], [37, 1], [38, 1], [39, 2], [44, 1], [45, 2], [46, 3]]) if (top(x) + 1 + y < belt) set(top(x) + 1 + y, x, 'N');
+    // side detailing: crisp specular crease, side scoop, door cut
+    for (let x = 4; x <= 74; x++) { const y = 14 + squat; if (g[y] && g[y][x] && g[y][x] !== 'o' && y > top(x) + 1) g[y][x] = 'V'; }
+    for (let x = 22; x <= 29; x++) for (let y = 15 + squat; y <= 17 + squat; y++) if (g[y] && g[y][x] && g[y][x] !== 'o') g[y][x] = x === 22 || y === 15 + squat ? 'o' : 'D';
+    for (let y = belt; y <= sill - 2; y++) if (g[y] && g[y][53] && g[y][53] !== 'o') g[y][53] = 'd';
+    for (let x = 3; x <= 76; x++) if (g[sill][x] && g[sill][x] !== 'o') g[sill][x] = 'O';
+    // slim headlight, thin red tail light
+    for (let x = 73; x <= 76; x++) set(LAMP_ROW + squat, x, lamp ? 'X' : 'N');
+    for (let x = 1; x <= 4; x++) set(12 + squat, x, 'Z');
+    // belly air ports
     for (const nx of NOZ) {
-      for (let dy = 2; dy <= 3; dy++) for (let dx = -1; dx <= 1; dx++) set(sill + dy, nx + dx, dx === 0 ? 'T' : 'o');
-      for (let dx = -1; dx <= 1; dx++) set(sill + 4, nx + dx, thrust ? (dx === 0 ? 'X' : 'N') : (dx === 0 ? 'o' : null));
+      for (let dx = -2; dx <= 2; dx++) set(sill + 1, nx + dx, Math.abs(dx) === 2 ? 'o' : 'T');
+      for (let dx = -1; dx <= 1; dx++) set(sill + 2, nx + dx, thrust ? (dx === 0 ? 'X' : 'N') : (dx === 0 ? 'o' : null));
     }
-    // wheels: smooth tyre with tread notches, alloy rim with rotating spokes
-    for (const cx of WHEELS) for (let y = WCY - 8; y <= WCY + 8; y++) for (let x = cx - 8; x <= cx + 8; x++) {
+    // small wheels: tyre with tread notches, alloy rim with rotating spokes
+    for (const cx of WHEELS) for (let y = WCY - 7; y <= WCY + 7; y++) for (let x = cx - 7; x <= cx + 7; x++) {
       if (y < 0 || y >= TRH) continue;
       const dx = x - cx, dy = y - WCY, rr = Math.hypot(dx, dy), ang = Math.atan2(dy, dx);
       let ch = null;
-      if (rr <= WR && rr > 5.3) {
-        ch = rr > 6.6 ? 't' : 'T';
-        if (rr > 6.7 && Math.floor(((ang / (Math.PI * 2)) * 16 + phase / 2 + 16)) % 2 === 0) ch = 'T';
-      } else if (rr <= 5.3 && rr > 1.4) {
-        ch = rr > 4.4 ? 'N' : 'n';
-        for (let i = 0; i < 5; i++) { const a = phase * Math.PI / 10 + i * Math.PI * 2 / 5; const px = Math.cos(a), py = Math.sin(a); const along = dx * px + dy * py, perp = Math.abs(-dx * py + dy * px); if (along > 1 && along < 4.6 && perp < 0.7) ch = 'N'; }
-        if (rr <= 4.4 && dx + dy > 2.5) ch = ch === 'N' ? 'n' : 'T';
-      } else if (rr <= 1.4) ch = 'o';
-      if (ch) g[y][x] = ch;
+      if (rr <= WR && rr > 4.6) {
+        ch = rr > 5.8 ? 't' : 'T';
+        if (rr > 5.9 && Math.floor(((ang / (Math.PI * 2)) * 14 + phase / 2 + 14)) % 2 === 0) ch = 'T';
+      } else if (rr <= 4.6 && rr > 1.2) {
+        ch = rr > 3.8 ? 'N' : 'n';
+        for (let i = 0; i < 5; i++) { const a = phase * Math.PI / 10 + i * Math.PI * 2 / 5; const px = Math.cos(a), py = Math.sin(a); const along = dx * px + dy * py, perp = Math.abs(-dx * py + dy * px); if (along > 0.8 && along < 4 && perp < 0.7) ch = 'N'; }
+      } else if (rr <= 1.2) ch = 'o';
+      if (ch && (!g[y][x] || g[y][x] === 'o' || rr <= WR)) g[y][x] = ch;
     }
     if (white) for (let y = 0; y < TRH; y++) for (let x = 0; x < TRW; x++) if (g[y][x]) g[y][x] = (g[y][x] === 'o' || g[y][x] === 't') ? 'k' : 'x';
     return g;
   }
-  const truckSprite = o => bake('truck' + JSON.stringify(o), cropTop(buildTruck(o)));
+  const truckSprite = o => bake('car' + JSON.stringify(o), cropTop(buildTruck(o)));
   const STAND_G = buildTruck({}), STAND_C = cropTop(STAND_G);
-  const DUCK_G = cropTop(buildTruck({ drop: 6, cabDrop: 3 }));
+  const DUCK_G = cropTop(buildTruck({ squat: 6, duck: true }));
   const STAND_H = STAND_C.length, DUCK_H = DUCK_G.length;
   const CROP = TRH - STAND_H;                       // rows cropped from the top of the standing sprite
-  const NOZ_TIP = SILL0 + 4 - CROP;                 // nozzle tip row inside the standing sprite
-  const LAMP_Y = BELT0 + 2 - CROP;
+  const NOZ_TIP = SILL0 + 2 - CROP;                 // belly port row inside the standing sprite
   const HERO_BOX = autoBoxes(STAND_C, 5, 2), DUCK_BOX = autoBoxes(DUCK_G, 5, 2);
 
   // ---------- obstacles (ink style) ----------
@@ -229,59 +224,43 @@
     for (let y = 4; y < h - 4; y++) if (g[y][17] === 'k') g[y][17] = 'g';
     return g;
   }
-  // flying hairpiece: tall pompadour crest with a curl, combed-back strands, solid dark roots and a lace fringe
-  const WIG_MASK = [
-    '....######..................................',
-    '..##########................................',
-    '.#############..............................',
-    '################............................',
-    '#################...........................',
-    '.######ww#########..........................',
-    '..####w##w#########.........................',
-    '...###w#ww#########.........................',
-    '...####ww##########.........................',
-    '...################.#.......................',
-    '...##########################...............',
-    '...###############################..........',
-    '...######################################...',
-    '...#######################################..',
-    '....#####################################...',
-    '.....##################################.....',
-    '......RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR......',
-    '.......R.R.R.R.R.R.R.R.R.R.R.R.R.R.R........',
-  ];
+  // flying hairpiece: straw-blond swept pompadour on a dome, dark roots + lace fringe, and a comb-over flap that flaps
+  const WIG_GW = 64, WIG_GH = 36, WIG_BOT = 31;      // WIG_BOT = lowest core row (fringe)
   function wigGrid(frame, coreOnly) {
-    const w = 56, h = 27, g = grid(w, h), ox = 6, oy = 6;
-    WIG_MASK.forEach((row, y) => { for (let x = 0; x < row.length; x++) if (row[x] !== '.') g[oy + y][ox + x] = row[x] === '#' ? 'g' : row[x] === 'R' ? 'k' : 'k'; });
-    outline(g, 'k', new Set(['g']));
-    WIG_MASK.forEach((row, y) => { for (let x = 0; x < row.length; x++) {
-      if (g[oy + y][ox + x] !== 'g') continue;
-      // strands follow the swoop: arc over the crest, then run back almost flat
-      const s = y + 9 * Math.exp(-(((x - 9) / 9) ** 2)) - 0.08 * x;
-      if (((Math.floor(s * 0.75) % 3) + 3) % 3 === 0 && (x * 5 + y * 3) % 13 > 1) g[oy + y][ox + x] = 'k';
-      else if (y < 9 && (x + y) % 4 === 0) g[oy + y][ox + x] = 'l';
-    } });
+    const w = WIG_GW, h = WIG_GH, g = grid(w, h);
+    const inDome = (x, y) => (((x - 34) / 18) ** 2 + ((y - 29) / 9) ** 2 <= 1 && y <= 30);
+    const inQuiff = (x, y) => Math.hypot(x - 18, (y - 21) * 1.1) <= 8 || Math.hypot(x - 11, y - 18) <= 4.5 || Math.hypot(x - 24, y - 18) <= 6;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (inDome(x, y) || (inQuiff(x, y) && y <= 30)) g[y][x] = 'y';
+    for (let x = 17; x <= 50; x += 2) if (g[30][x]) g[WIG_BOT][x] = 'y';
+    // comb-over flap: a thick lock lifted off the crown, 4-frame flap (up, mid, flat, mid) — never below the dome
     if (!coreOnly) {
-      // two-frame flap: strand wings up / down
-      const up = frame === 0;
-      const wing = (rx, ry, dir) => {
-        for (const [len, sp] of [[13, -0.25], [11, 0.05], [9, 0.35]]) {
-          const a = (up ? -0.95 : 0.55) + sp;
-          for (let i = 0; i <= 26; i++) {
-            const t = i / 26, x = Math.round(rx + dir * Math.cos(a) * len * t), y = Math.round(ry + Math.sin(a) * len * t + Math.sin(t * Math.PI) * (up ? 1.5 : -1.2));
-            if (y >= 0 && y < h && x >= 0 && x < w && !g[y][x]) g[y][x] = 'k';
-            if (t < 0.5 && y + 1 < h && x >= 0 && x < w && !g[y + 1][x]) g[y + 1][x] = 'k';
-          }
-        }
-      };
-      wing(ox + 4, oy + 12, -1);
-      wing(ox + 41, oy + 13, 1);
+      const ang = [-0.95, -0.5, -0.12, -0.5][frame];
+      for (let i = 0; i <= 40; i++) {
+        const t = i / 40, ax = 38 + Math.cos(ang) * 22 * t, ay = 21 + Math.sin(ang) * 22 * t + Math.sin(t * Math.PI) * -2.5;
+        const r = 2.8 * (1 - t) + 0.7;
+        for (let yy = Math.floor(ay - r); yy <= Math.ceil(ay + r); yy++) for (let xx = Math.floor(ax - r); xx <= Math.ceil(ax + r); xx++)
+          if (yy >= 0 && yy < h && xx >= 0 && xx < w && Math.hypot(xx - ax, yy - ay) <= r) g[yy][xx] = yy < ay - 0.5 ? 'Y' : 'y';
+      }
     }
+    outline(g, 'H');
+    // strands: arc over the quiff, sweep back flat over the dome; light on top, dark roots at the bottom
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const c = g[y][x]; if (c !== 'y' && c !== 'Y') continue;
+      const above = y > 0 && g[y - 1][x] === 'H';
+      if (y >= 28 && inDome(x, y)) { g[y][x] = (x + y) % 3 === 0 ? 'H' : 'h'; continue; }
+      const sv = y + 7 * Math.exp(-(((x - 18) / 9) ** 2)) - 0.12 * x;
+      if (((Math.floor(sv * 0.7) % 3) + 3) % 3 === 0 && (x * 5 + y * 3) % 11 > 1) g[y][x] = 'h';
+      else if (above || (y < 22 && (x + 2 * y) % 5 === 0)) g[y][x] = 'L';
+      else if (y < 24) g[y][x] = 'Y';
+    }
+    for (let x = 17; x <= 50; x++) if (g[WIG_BOT][x]) g[WIG_BOT][x] = x % 2 ? 'H' : null;  // lace fringe
+    // curl in the quiff front
+    for (const [x, y] of [[10, 17], [11, 16], [12, 16], [13, 17], [13, 18], [12, 19], [11, 19]]) if (g[y][x]) g[y][x] = 'H';
     return g;
   }
   const OB = {
     cone: coneGrid(26), stack: coneGrid(38, [12, 23]), barrier: barrierGrid(), drum: drumGrid(),
-    wig: [0, 1].map(f => wigGrid(f)),
+    wig: [0, 1, 2, 3].map(f => wigGrid(f)),
   };
   const BOX = {
     cone: autoBoxes(OB.cone, 4, 1), stack: autoBoxes(OB.stack, 5, 1), barrier: autoBoxes(OB.barrier, 6, 1), drum: autoBoxes(OB.drum, 8, 1),
@@ -292,9 +271,9 @@
     { id: 'stack', w: 18, h: 38, minSpeed: 0, multiSpeed: 8, maxSize: 2, minGap: 120 },
     { id: 'barrier', w: 30, h: 22, minSpeed: 6.4, multiSpeed: 99, maxSize: 1, minGap: 130 },
     { id: 'drum', w: 24, h: 32, minSpeed: 0, multiSpeed: 9, maxSize: 2, minGap: 120 },
-    { id: 'wig', w: 56, h: 27, minSpeed: 0, multiSpeed: 999, maxSize: 1, minGap: 150, flying: true },
+    { id: 'wig', w: 64, h: 36, minSpeed: 0, multiSpeed: 999, maxSize: 1, minGap: 150, flying: true },
   ];
-  const WIG_Y = [GROUND - 29, GROUND - 45, GROUND - 91]; // low (hop), mid (duck), high (pass)
+  const WIG_Y = [GROUND - 18 - WIG_BOT, GROUND - 40 - WIG_BOT]; // duck-under (clear gap above the squatted car), high pass — never a jump
 
   // clouds: light-grey outline, background fill (like the original)
   function cloudGrid(seed) {
@@ -359,20 +338,32 @@
     if (G) render(); // keep the frame visible after a resize (matters in ?rec=1, where nothing else redraws)
   }
 
-  // ---------- ground tile: one ink line with bumps, dashes and pebbles ----------
+  // ---------- ground tile: rust line with low craters, dashes and pebbles; far layer: mesa + dome outlines ----------
   const BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
   function bakeGround() {
     const GW = 600, GH = H - GROUND + 2, g = grid(GW, GH), r = mulberry(SEED ^ 0x51ed);
-    for (let x = 0; x < GW; x++) g[2][x] = 'k';
-    for (let i = 0; i < 9; i++) { // little bumps and dips in the line
-      const x0 = Math.floor(r() * (GW - 20)), len = 4 + Math.floor(r() * 10), up = r() < 0.6;
-      for (let x = x0; x < x0 + len; x++) { if (up) { g[1][x] = 'k'; g[2][x] = (x === x0 || x === x0 + len - 1) ? 'k' : null; } else { g[2][x] = null; g[3][x] = 'k'; } }
+    for (let x = 0; x < GW; x++) g[2][x] = 'u';
+    for (let i = 0; i < 6; i++) { // low craters: raised rims and a shallow dip
+      const x0 = 10 + Math.floor(r() * (GW - 40)), len = 6 + Math.floor(r() * 10);
+      for (let x = x0; x < x0 + len; x++) { g[2][x] = null; g[3][x] = 'u'; }
+      g[1][x0 - 2] = 'u'; g[1][x0 - 1] = 'u'; g[2][x0 - 1] = 'u'; g[1][x0 + len] = 'u'; g[1][x0 + len + 1] = 'u'; g[2][x0 + len] = 'u';
     }
-    for (let i = 0; i < 46; i++) {
+    for (let i = 0; i < 50; i++) {
       const x = Math.floor(r() * (GW - 4)), y = 5 + Math.floor(r() * (GH - 9)), len = r() < 0.5 ? 1 : 1 + Math.floor(r() * 3);
-      for (let k = 0; k < len; k++) g[y][x + k] = r() < 0.35 ? 'g' : 'k';
+      for (let k = 0; k < len; k++) g[y][x + k] = r() < 0.3 ? 'g' : 'u';
     }
     tiles.ground = bake('ground' + H, g);
+    const FW = 960, FH = 30, f = grid(FW, FH);
+    const line = (x0, y0, x1, y1) => { const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)); for (let i = 0; i <= n; i++) { const x = Math.round(x0 + (x1 - x0) * i / n), y = Math.round(y0 + (y1 - y0) * i / n); if (x >= 0 && x < FW && y >= 0 && y < FH) f[y][x] = 'g'; } };
+    for (const [mx, mw, mh] of [[40, 90, 14], [300, 60, 9], [520, 140, 18], [800, 70, 11]]) { // flat-topped mesas
+      const s = Math.round(mh * 0.7);
+      line(mx, FH - 1, mx + s, FH - 1 - mh); line(mx + s, FH - 1 - mh, mx + mw - s, FH - 1 - mh); line(mx + mw - s, FH - 1 - mh, mx + mw, FH - 1);
+    }
+    const dx = 420; // tiny distant habitat dome + antenna
+    for (let a = 0; a <= 60; a++) { const t = Math.PI * a / 60; f[Math.round(FH - 1 - Math.sin(t) * 6)][Math.round(dx + Math.cos(t) * 8)] = 'g'; }
+    for (let y = FH - 15; y < FH - 6; y++) f[y][dx + 12] = 'g';
+    f[FH - 16][dx + 11] = 'g'; f[FH - 16][dx + 13] = 'g';
+    tiles.far = bake('far', f);
     tiles.w = W;
   }
 
@@ -451,7 +442,7 @@
       obstacles: [], lastTypes: [], parts: [], blobs: [], clouds: [],
       night: false, nightFrames: 0, nextNight: NIGHT_EVERY, stars: [], moon: 0,
       flash: 0, jumpHeld: false, duckHeld: false, plan: null, squash: 0, shake: 0, boom: null,
-      hitStop: 0, hitFlash: 0, knock: 0, knockV: 0,
+      hitStop: 0, hitFlash: 0, knock: 0, knockV: 0, tilt: 0, jumpAge: 0, retro: 0,
     };
     const r = mulberry(SEED ^ 0xc10d);
     for (let i = 0; i < 4; i++) G.clouds.push({ x: 40 + i * 170 + r() * 80, y: 18 + Math.floor(r() * (GROUND - 110)), i: i % 3 });
@@ -468,26 +459,38 @@
   function blob(x, y, vx, vy, r0, r1, grow, max, dens, kind = 'vapor', drift = 0.3) {
     G.blobs.push({ x, y, vx, vy, r0, r1, grow, max, dens, kind, drift, age: 0 });
   }
+  // ground-level billows sit behind the car so its silhouette always reads; jets and crash puffs draw in front
+  const billow = (x, y, vx, vy, r0, r1, grow, max, dens) => blob(x, y, vx, vy, r0, r1, grow, max, dens, 'billow');
   function hopBurst() {
     const base = GROUND - 2, cx = HERO_X + (NOZ[0] + NOZ[1]) / 2;
     for (const nx of NOZ) {
       const x = HERO_X + nx;
-      blob(x, base - 7, 0, 1.4, 3, 8, 4, 22, 1.5);                        // jets slamming into the ground
-      blob(x, base - 2, 0, 0.3, 4, 10, 5, 34, 1.4);
+      billow(x, base - 7, 0, 1.4, 3, 8, 4, 22, 1.5);                        // jets slamming into the ground
+      billow(x, base - 2, 0, 0.3, 4, 10, 5, 34, 1.4);
     }
     // the main billow: a cluster of overlapping puffs so the outline reads as one lumpy cloud
     for (let i = 0; i < 7; i++) {
       const ox = (i - 3) * 6 + (fxRng() - 0.5) * 4;
-      blob(cx + ox, base - 2 - fxRng() * 6, ox * 0.09, -0.25 - fxRng() * 0.45, 4, 11 + fxRng() * 7, 8 + fxRng() * 4, 50 + fxRng() * 18, 1.25);
+      billow(cx + ox, base - 2 - fxRng() * 6, ox * 0.09, -0.25 - fxRng() * 0.45, 4, 11 + fxRng() * 7, 8 + fxRng() * 4, 50 + fxRng() * 18, 1.25);
     }
     for (let i = 0; i < 6; i++) {                                          // ground-hugging roll-out both ways
       const dir = i % 2 ? 1 : -1, sp = 0.9 + fxRng() * 1.4;
-      blob(cx + dir * (12 + fxRng() * 8), base - 1, dir * sp, -0.1 - fxRng() * 0.2, 3, 8 + fxRng() * 5, 9, 40 + fxRng() * 18, 1.1);
+      billow(cx + dir * (12 + fxRng() * 8), base - 1, dir * sp, -0.1 - fxRng() * 0.2, 3, 8 + fxRng() * 5, 9, 40 + fxRng() * 18, 1.1);
     }
-    for (let i = 0; i < 3; i++) blob(cx - 12 + fxRng() * 24, base - 12, -0.4 + fxRng() * 0.8, -0.5 - fxRng() * 0.4, 3, 7 + fxRng() * 4, 10, 40, 0.95);
+    for (let i = 0; i < 3; i++) billow(cx - 12 + fxRng() * 24, base - 12, -0.4 + fxRng() * 0.8, -0.5 - fxRng() * 0.4, 3, 7 + fxRng() * 4, 10, 40, 0.95);
+  }
+  // straight down out of the belly: a column of puffs from the ports to the ground, plus an outward roll at the ground
+  function jetColumn(top, dens) {
+    for (const nx of NOZ) {
+      const x = HERO_X + nx;
+      for (let yy = top + 1; yy < GROUND - 3; yy += 4) blob(x + (fxRng() - 0.5), yy, 0, 0.6, 3, 5 + (yy - top) * 0.06, 3, 7, dens, 'vapor', 0);
+      const dir = fxRng() < 0.5 ? -1 : 1;
+      billow(x + dir * 3, GROUND - 3, dir * (1 + fxRng() * 1.6), -0.15, 4, 9 + fxRng() * 4, 6, 30 + fxRng() * 10, 1.2);
+    }
   }
   function doJump() {
     if (heroJump(G.hero, G.speed)) {
+      G.jumpAge = 0; G.retro = 0;
       SFX.jump(); ev('jump');
       hopBurst();
     }
@@ -550,7 +553,7 @@
     if (wigOk && !G.firstWig && avail.some(t => t.flying)) { type = TYPES[4]; G.firstWig = true; }
     const size = G.speed >= type.multiSpeed ? rint(1, type.maxSize) : 1;
     const w = type.w * size, h = type.h;
-    const y = type.flying ? WIG_Y[G.firstWig === true ? (G.firstWig = 'done', 1) : rint(0, 2)] : GROUND + 1 - h;
+    const y = type.flying ? WIG_Y[G.firstWig === true ? (G.firstWig = 'done', 0) : rint(0, 1)] : GROUND + 1 - h;
     const minGap = Math.round(w * G.speed + type.minGap * GAP_COEF);
     const gap = rint(minGap, Math.round(minGap * MAX_GAP_COEF));
     G.obstacles.push({ type, size, x: W, y, w, h, gap, off: type.flying ? (rng() < 0.5 ? -0.8 : 0.8) : 0, followed: false, anim: rint(0, 30) });
@@ -656,6 +659,7 @@
         if (h.y >= GROUND_Y) { h.y = GROUND_Y; if (h.vy > 2) { h.vy = -h.vy * 0.3; landDust(0.6); } else h.vy = 0; }
       }
       G.knock += G.knockV; G.knockV *= 0.8;
+      G.tilt += ((h.y < GROUND_Y - 1 ? -0.2 : 0) - G.tilt) * 0.22;
       if (G.deadFrames % 10 === 0 && G.deadFrames < 110) blob(HERO_X + G.knock + NOZ[(G.deadFrames / 10) % 2], GROUND - 4, -0.3, -0.5, 2, 6, 10, 40, 0.75, 'vapor', 0);
       updateParts(0); updateBlobs(0);
       if (BOT && G.deadFrames > 110) restart();
@@ -663,17 +667,19 @@
     }
     G.playFrames++;
     if (BOT) botThink();
-    // thrust column on take-off, then a small continuous steam wisp from the nozzles while airborne
+    // take-off jet column, retro-burst just before touchdown, faint wisp in between
     if (h.jumping) {
-      for (const nx of NOZ) {
-        if (h.vy < -5) { blob(HERO_X + nx, h.y + NOZ_TIP + 4, 0, 3.4, 4, 9, 4, 18, 1.4); blob(HERO_X + nx, (h.y + NOZ_TIP + GROUND) / 2, 0, 2, 4, 8, 4, 16, 1.3); }
-        else if (G.playFrames % 2 === 0) blob(HERO_X + nx, h.y + NOZ_TIP + 2, -0.2, 1.0, 2, 5, 6, 18, 1.0, 'wisp');
-      }
+      G.jumpAge++;
+      const belly = h.y + NOZ_TIP;
+      if (G.jumpAge <= 9) jetColumn(belly, 1.4);
+      else if (!G.retro && h.vy > 0 && GROUND_Y - h.y < 24 + h.vy * 2) G.retro = 7;
+      if (G.retro > 1) { G.retro--; jetColumn(belly, 1.25); }
+      else if (G.jumpAge > 9 && G.playFrames % 2 === 0) for (const nx of NOZ) blob(HERO_X + nx, belly + 2, -0.2, 1.0, 1.5, 4, 6, 14, 0.85, 'wisp');
     }
     const landed = heroStep(h);
     if (landed) {
       if (!G.duckHeld) h.ducking = false;
-      G.squash = 7;
+      G.squash = 7; G.retro = 0;
       landDust(1);
     }
     if (G.squash > 0) G.squash--;
@@ -714,8 +720,9 @@
   }
   function landDust(k) {
     for (const wx of WHEELS) for (const dir of [-1, 1]) blob(HERO_X + G.knock + wx + dir * 3, GROUND - 2, dir * (1 + fxRng() * 1.6) * k, -0.25, 2, (5 + fxRng() * 3) * (0.6 + 0.4 * k), 6, 26, 1, 'dust', 0.35);
-    if (k >= 1) blob(HERO_X + (NOZ[0] + NOZ[1]) / 2, GROUND - 3, 0, -0.2, 3, 9, 8, 28, 0.95);
-    for (let i = 0; i < 5 * k; i++) part(HERO_X + 6 + fxRng() * 54, GROUND - 1, (fxRng() - 0.5) * 2.6, -1 - fxRng() * 1.4, 22, fxRng() < 0.6 ? 'ink' : 'grey', 1, 0.16);
+    if (k >= 1) billow(HERO_X + (NOZ[0] + NOZ[1]) / 2, GROUND - 3, 0, -0.2, 3, 9, 8, 28, 0.95);
+    if (k >= 1) for (let i = 0; i < 6; i++) { const dir = i % 2 ? 1 : -1; billow(HERO_X + 40 + dir * (14 + fxRng() * 14), GROUND - 2, dir * (1.2 + fxRng() * 1.8), -0.2, 3, 7 + fxRng() * 5, 7, 34 + fxRng() * 12, 1.15); }
+    for (let i = 0; i < 5 * k; i++) part(HERO_X + 6 + fxRng() * 70, GROUND - 1, (fxRng() - 0.5) * 2.6, -1 - fxRng() * 1.4, 22, fxRng() < 0.6 ? 'ink' : 'grey', 1, 0.16);
   }
   function updateParts(sp) {
     for (const p of G.parts) { p.x += p.vx - sp * 0.1; p.y += p.vy; p.vy = p.vy * 0.95 + p.grav; p.vx *= 0.97; p.life++; if (p.grav && p.y > GROUND) { p.y = GROUND; p.vy *= -0.3; p.vx *= 0.6; } }
@@ -735,8 +742,8 @@
     G.mode = 'over'; G.deadFrames = 0; G.plan = null; h.ducking = false;
     SFX.crash(); ev('crash');
     G.shake = 14; G.hitStop = 3; G.hitFlash = 2;
-    h.vy = Math.min(h.vy, 0) - 3.2; h.jumping = false; G.knockV = -1.5; G.knock = 0;
-    const cx = Math.max(HERO_X + HERO_W - 6, o.x + 4), cy = Math.min(h.y + 14, GROUND - 10);
+    h.vy = Math.min(h.vy, 0) - 3.6; h.jumping = false; G.knockV = -1.6; G.knock = 0; G.tilt = -0.28;
+    const cx = Math.max(HERO_X + HERO_W - 6, o.x + 4), cy = Math.min(h.y + 12, GROUND - 8);
     G.boom = { x: cx, y: cy, f: 0 };
     for (let i = 0; i < 5; i++) blob(cx - 6 + fxRng() * 10, cy + (fxRng() - 0.5) * 8, -0.5 - fxRng() * 1.5, -0.6 + fxRng() * 0.8, 3, 10 + fxRng() * 6, 7, 46 + fxRng() * 16, 1.2, 'vapor', 0);
     for (let i = 0; i < 4; i++) blob(HERO_X + (NOZ[0] + NOZ[1]) / 2 + (fxRng() - 0.5) * 30, GROUND - 3, (fxRng() - 0.5) * 3, -0.3, 3, 10 + fxRng() * 4, 8, 44, 1.1, 'vapor', 0);
@@ -749,7 +756,7 @@
   }
 
   // ---------- render ----------
-  const PCOL = { ink: PAL.k, grey: PAL.g };
+  const PCOL = { ink: PAL.k, grey: PAL.u };
   function text(str, x, y, color, sc = 2) {
     b.fillStyle = color;
     for (const ch of str) {
@@ -758,30 +765,33 @@
       x += 6 * sc;
     }
   }
-  // night is a dithered horizontal wipe of an inverted palette (no alpha dissolve)
-  function nightEdge() {
-    const m = nightMix;
-    return G.night ? { from: 'right', e: W - m * (W + 10) } : { from: 'left', e: m * (W + 10) };
+  // night is the game's own palette fade: the five world tones step toward the night set (no wipe, no alpha dissolve)
+  const nightT = () => Math.round(nightMix * (NSTEP - 1)) / (NSTEP - 1);
+  const pack = c => (c[0] << 16) | (c[1] << 8) | c[2];
+  const TONE = new Map([['w', 'w'], ['s', 'w'], ['k', 'k'], ['u', 'u'], ['g', 'g'], ['l', 'l']].map(([k, n]) => [pack(RGB[k]), n]));
+  const skyNight = y => y <= GROUND ? lerpC(SKY_TOP, SKY_HOR, Math.pow(Math.max(0, y) / GROUND, 1.4)) : SOIL_N;
+  // mid-fade warmth: push the in-between steps toward a rusty dusk instead of a grey midpoint
+  function dusk(c, t) {
+    const k = Math.sin(Math.PI * t), l = (c[0] + c[1] + c[2]) / 3, sat = 1 + 0.9 * k;
+    return [Math.min(255, Math.max(0, Math.round(l + (c[0] - l) * sat + 34 * k))), Math.min(255, Math.max(0, Math.round(l + (c[1] - l) * sat - 4 * k))), Math.min(255, Math.max(0, Math.round(l + (c[2] - l) * sat - 22 * k)))];
   }
-  function isNight(x, y, ne) {
-    if (nightMix <= 0) return false;
-    if (nightMix >= 1) return true;
-    const th = (BAYER[y & 3][x & 3] + 0.5) / 16 * 8;
-    return ne.from === 'right' ? x > ne.e + th : x < ne.e - th;
-  }
-  function invertPass(ne) {
-    if (nightMix <= 0) return;
-    const ops = [['difference', '#ffffff'], ['lighter', `rgb(${NIGHT_LIFT},${NIGHT_LIFT},${NIGHT_LIFT})`]];
-    for (const [op, fill] of ops) {
-      b.globalCompositeOperation = op; b.fillStyle = fill;
-      if (nightMix >= 1) { b.fillRect(0, 0, W, H); continue; }
-      const e = Math.round(ne.e);
-      if (ne.from === 'right') { if (e + 9 < W) b.fillRect(Math.max(0, e + 9), 0, W - Math.max(0, e + 9), H); }
-      else if (e - 9 > 0) b.fillRect(0, 0, Math.min(W, e - 9), H);
-      for (let x = Math.max(0, e - 9); x <= Math.min(W - 1, e + 9); x++) for (let y = 0; y < H; y++) if (isNight(x, y, ne)) b.fillRect(x, y, 1, 1);
+  function nightPass(t) {
+    if (t <= 0) return;
+    const img = b.getImageData(0, 0, W, H), d = img.data;
+    const mixed = {}; for (const k of ['k', 'u', 'g', 'l']) mixed[k] = dusk(lerpC(RGB[k], NIGHT[k], t), t);
+    for (let y = 0; y < H; y++) {
+      const bg = dusk(lerpC(RGB.w, skyNight(y), t), t);
+      for (let x = 0, i = y * W * 4; x < W; x++, i += 4) {
+        const tone = TONE.get((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]); if (!tone) continue;
+        const c = tone === 'w' ? bg : mixed[tone];
+        d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2];
+      }
     }
-    b.globalCompositeOperation = 'source-over';
+    b.putImageData(img, 0, 0);
   }
+  const VAPC = { k: RGB.k, g: hex('#c4bcb6'), l: hex('#ece8e4'), w: RGB.w, x: RGB.x };
+  const DUSTC = { k: RGB.k, g: RGB.u, l: RGB.l, w: RGB.w, x: RGB.x };
+  const vapor0 = kind => kind === 'dust' ? DUSTC : VAPC;
   function drawBlobs(kind, nightAware, ne) {
     const list = [];
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
@@ -814,7 +824,7 @@
     }
     const img = vctx.createImageData(bw, bh), d = img.data;
     const vapor = kind !== 'dust', soft = kind === 'wisp';
-    const C = { k: RGB.k, g: RGB.g, l: RGB.l, w: RGB.w, x: RGB.x };
+    const C = vapor0(kind);
     for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
       const i = y * bw + x; if (!IN[i]) continue;
       const gx = x + x0, gy = y + y0, th = (BAYER[gy & 3][gx & 3] + 0.5) / 16;
@@ -831,7 +841,6 @@
         } else c = th < 0.35 ? C.l : C.w;
       }
       if (!c) continue;
-      if (nightAware && isNight(gx, gy, ne)) c = inv(c);
       const o = i * 4; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
     }
     vctx.putImageData(img, 0, 0);
@@ -840,40 +849,30 @@
   function drawSprite(sp, x, y) { b.drawImage(sp.c, Math.round(x), Math.round(y)); }
   function render() {
     if (tiles.w !== W || !tiles.ground) bakeGround();
-    const ne = nightEdge();
-    const dark = nightMix > 0.5;
-    const pageBg = dark ? NIGHT_BG : BG;
+    const t = nightT(), ne = null;
+    const pageBg = css(dusk(lerpC(RGB.w, SKY_TOP, t), t));
     document.body.style.background = pageBg;
-    document.documentElement.style.setProperty('--fg', dark ? NIGHT_INK : INK);
-    document.documentElement.style.setProperty('--muted', dark ? '#9a9a9a' : '#8a8a8a');
+    document.documentElement.style.setProperty('--fg', css(lerpC(RGB.k, NIGHT.k, t)));
+    document.documentElement.style.setProperty('--muted', css(lerpC(hex('#9a6a52'), hex('#b07a64'), t)));
 
     const f = G.frame, h = G.hero;
-    b.fillStyle = BG; b.fillRect(0, 0, W, H);
-    // stars + moon exist only inside the night region (drawn in ink, the inversion lights them)
-    if (nightMix > 0) {
-      b.fillStyle = PAL.k;
-      for (const s of G.stars) {
-        if (s.x > W || !isNight(s.x, s.y, ne)) continue;
-        b.fillRect(s.x, s.y, 1, 1);
-        if (s.big || (f + s.tw) % 120 < 14) { b.fillRect(s.x - 1, s.y, 3, 1); b.fillRect(s.x, s.y - 1, 1, 3); }
-      }
-      const mx = Math.round(W * 0.72), my = Math.round(GROUND * 0.22);
-      const ph = [5, 3, -3, -5][G.moon];
-      for (let y = -10; y <= 10; y++) for (let x = -10; x <= 10; x++) {
-        const dd = Math.hypot(x, y), d2 = Math.hypot(x + ph, y - 1);
-        if (dd <= 9.5 && d2 > 8.5 && isNight(mx + x, my + y, ne)) { b.fillStyle = dd > 8.3 ? PAL.g : PAL.k; b.fillRect(mx + x, my + y, 1, 1); }
-      }
-    }
-    // sparse clouds
+    b.fillStyle = PAL.w; b.fillRect(0, 0, W, H);
+    // small pale sun (fades into the night sky with the palette)
+    const sx0 = Math.round(W * 0.78), sy0 = Math.round(GROUND * 0.24);
+    b.fillStyle = PAL.s;
+    for (let y = -4; y <= 4; y++) for (let x = -4; x <= 4; x++) if (Math.hypot(x, y) <= 4.2) b.fillRect(sx0 + x, sy0 + y, 1, 1);
+    // sparse dust clouds, far mesas + dome
     for (const c of G.clouds) drawSprite(CLOUDS[c.i], c.x, c.y);
+    const fOff = Math.floor(G.bgDist * 0.12) % 960;
+    for (let x = -fOff; x < W; x += 960) drawSprite(tiles.far, x, GROUND - 30);
     // ground
     const gOff = Math.floor(G.dist) % 600;
     for (let x = -gOff; x < W; x += 600) drawSprite(tiles.ground, x, GROUND - 2);
     // obstacles
     for (const o of G.obstacles) {
       if (o.type.flying) {
-        const fr = Math.floor(o.anim / 10) % 2;
-        drawSprite(bake('wig' + fr, OB.wig[fr]), o.x, o.y + (fr ? 2 : 0));
+        const fr = Math.floor(o.anim / 6) % 4;
+        drawSprite(bake('wig' + fr, OB.wig[fr]), o.x, o.y);
       } else {
         const sp = bake(o.type.id, OB[o.type.id]);
         for (let i = 0; i < o.size; i++) drawSprite(sp, o.x + i * o.type.w, o.y);
@@ -881,7 +880,7 @@
     }
     // airborne shadow dash
     const air = GROUND_Y - h.y;
-    if (air > 2) { const shw = Math.max(16, 50 - air * 0.4); b.fillStyle = PAL.g; b.fillRect(Math.round(HERO_X + 32 - shw / 2), GROUND + 2, Math.round(shw), 1); }
+    if (air > 2) { const shw = Math.max(18, 60 - air * 0.45); b.fillStyle = PAL.u; b.fillRect(Math.round(HERO_X + 40 - shw / 2), GROUND + 2, Math.round(shw), 1); }
     // particles + landing dust
     for (const p of G.parts) {
       const k = p.life / p.max, s = Math.max(1, Math.round(p.size * (1 - k * 0.5)));
@@ -903,7 +902,7 @@
       if (show) text(pad(val), sx, HUDM, PAL.k);
       if (hiScore > 0) { text('HI', sx - 12 * 9, HUDM, PAL.g); text(pad(hiScore), sx - 12 * 6.5, HUDM, PAL.g); }
     }
-    if (G.mode === 'over') {
+    if (G.mode === 'over' && G.deadFrames >= 18) {   // GAME OVER lands ~0.3 s after the impact
       const gx = Math.round(W / 2 - (9 * 12 - 2) / 2), gy = Math.round(GROUND * 0.34);
       text('GAME OVER', gx, gy, PAL.k);
       const rx = Math.round(W / 2), ry = gy + 40;
@@ -914,39 +913,57 @@
       }
       for (let i = 0; i < 6; i++) b.fillRect(rx + 4 + i - 2, ry - 9 + i - 1, 7 - i, 1); // arrow head
     }
-    invertPass(ne);
+    nightPass(t);
+    // night sky: stars and two tiny moons, faded in with the palette
+    if (t > 0) {
+      b.globalAlpha = t; b.fillStyle = '#f3d9c8';
+      for (const s of G.stars) {
+        if (s.x > W) continue;
+        b.fillRect(s.x, s.y, 1, 1);
+        if (s.big || (f + s.tw) % 120 < 14) { b.globalAlpha = t * 0.5; b.fillRect(s.x - 1, s.y, 3, 1); b.fillRect(s.x, s.y - 1, 1, 3); b.globalAlpha = t; }
+      }
+      const px = Math.round(W * 0.66), py = Math.round(GROUND * 0.2);      // Phobos: small, lumpy
+      for (const [x, y] of [[0, 0], [1, 0], [2, 0], [-1, 1], [0, 1], [1, 1], [2, 1], [3, 1], [-1, 2], [0, 2], [1, 2], [2, 2], [0, 3], [1, 3]]) b.fillRect(px + x, py + y, 1, 1);
+      b.fillStyle = '#c99a86'; b.fillRect(px + 2, py + 2, 1, 1);
+      b.fillStyle = '#f3d9c8'; const qx = Math.round(W * 0.84), qy = Math.round(GROUND * 0.12); // Deimos: a dot
+      b.fillRect(qx, qy, 2, 2);
+      b.globalAlpha = 1;
+    }
 
-    // hero: the only colour in the world (drawn after the inversion)
+    // hero: the roadster (drawn after the palette pass, it keeps its colour)
     const phase = G.mode === 'play' ? Math.floor(G.dist / 3) % 10 : 0;
-    let spr, hy, hx = HERO_X, heroDrop = 0;
+    let spr, hy, hx = HERO_X, squat = 0, ducked = false;
     if (G.mode === 'over') {
-      spr = truckSprite(G.hitFlash > 0 ? { dead: true, drop: 1, white: true } : { dead: true, drop: 1, lamp: false });
-      hy = Math.round(h.y) + (STAND_H - spr.h); hx = HERO_X + Math.round(G.knock);
-    } else if (h.ducking && !h.jumping) { spr = truckSprite({ phase, drop: 6, cabDrop: 3 }); hy = GROUND + 1 - DUCK_H; }
+      spr = truckSprite(G.hitFlash > 0 ? { dead: true, squat: 1, white: true } : { dead: true, squat: 1, lamp: false });
+      hy = Math.round(h.y) + (STAND_H - spr.h); hx = HERO_X + Math.round(G.knock); squat = 1;
+    } else if (h.ducking && !h.jumping) { spr = truckSprite({ phase, squat: 6, duck: true }); hy = GROUND + 1 - DUCK_H; squat = 6; ducked = true; }
     else {
-      let drop = 0;
-      if (G.squash > 0) drop = G.squash > 4 ? 2 : 1;
-      else if (G.mode === 'play' && !h.jumping) drop = Math.floor(G.dist / 26) % 2;
-      const thrust = h.jumping && h.vy < 1;
+      if (G.squash > 0) squat = G.squash > 4 ? 2 : 1;
+      else if (G.mode === 'play' && !h.jumping) squat = Math.floor(G.dist / 26) % 2;
+      const thrust = h.jumping && (G.jumpAge <= 9 || G.retro > 0);
       const lamp = G.mode === 'intro' ? (G.introFrames % 50 < 25) : true;
-      spr = truckSprite({ phase, drop, thrust, lamp }); heroDrop = drop;
+      spr = truckSprite({ phase, squat, thrust, lamp });
       hy = h.y + (STAND_H - spr.h);
     }
+    drawBlobs('billow', false, ne);
     drawBlobs('wisp', false, ne);
-    drawSprite(spr, hx, hy);
+    if (G.mode === 'over' && Math.abs(G.tilt) > 0.01) {          // crash tilt around the rear wheel
+      const pvx = hx + WHEELS[0], pvy = hy + spr.h - 1;
+      b.save(); b.translate(pvx, pvy); b.rotate(G.tilt); b.drawImage(spr.c, Math.round(hx - pvx), Math.round(hy - pvy)); b.restore();
+    } else drawSprite(spr, hx, hy);
     // night headlight beam
-    if (nightMix > 0.5 && G.mode !== 'over') {
-      const ducked = h.ducking && !h.jumping;
-      const lx = HERO_X + 63, ly = hy + BELT0 + 2 + (ducked ? 6 : heroDrop) - (TRH - spr.h);
-      b.fillStyle = '#ffffff';
+    if (t > 0.5 && G.mode !== 'over') {
+      const lx = HERO_X + 77, ly = hy + LAMP_ROW + squat - (TRH - spr.h) - (ducked ? 0 : 0);
+      b.fillStyle = '#fff4e0';
       for (let i = 0; i < 120; i++) {
         const a = 0.16 - i / 120 * 0.15; if (a <= 0) break;
-        b.globalAlpha = a; const half = 1 + i * 0.14;
-        b.fillRect(lx + i, Math.round(ly - half * 0.6), 1, Math.round(half * 1.6));
+        b.globalAlpha = a * t; const half = 1 + i * 0.12;
+        b.fillRect(lx + i, Math.round(ly - half * 0.6), 1, Math.round(half * 1.4));
       }
       b.globalAlpha = 1;
     }
     drawBlobs('vapor', false, ne);
+    if (G.hitStop > 0) { b.globalAlpha = 0.2; b.fillStyle = '#ffffff'; b.fillRect(0, 0, W, H); b.globalAlpha = 1; } // impact flash
 
     // compose with screen shake (underlay the unshifted frame so no page strip shows)
     let sx = 0, sy = 0;
