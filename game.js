@@ -6,7 +6,7 @@
   const Q = new URLSearchParams(location.search);
   let BOT = Q.get('bot') === '1';
   const REC = Q.get('rec') === '1';
-  const SCALE_PARAM = parseInt(Q.get('scale') || '0', 10) || 0;
+  const SCALE_PARAM = parseFloat(Q.get('scale') || '0') || 0;
   const SEED = Q.has('seed') ? (parseInt(Q.get('seed'), 10) >>> 0) : (REC ? 1337 : (Math.random() * 1e9) >>> 0);
 
   function mulberry(a) {
@@ -17,40 +17,53 @@
   const fxRng = mulberry(SEED ^ 0x1234567);
   const rint = (a, b) => Math.floor(rng() * (b - a + 1)) + a;
 
+  // ---------- band size (fixed at load) ----------
+  // Wide windows: band fills ~80% of the height, >=480 game px wide. Portrait phones: ~340 px wide (bigger pixels), taller band, centred.
+  function pickScale(aw, ah, hh) {
+    const minW = aw < ah ? 340 : 480;
+    const fit = Math.min(ah * 0.8 / hh, aw / minW);
+    if (SCALE_PARAM) return SCALE_PARAM;
+    const s = Math.floor(fit);
+    return (s < 1 || s < fit * 0.86) ? fit : s;
+  }
+  const H = (() => {
+    const d = window.devicePixelRatio || 1, aw = window.innerWidth * d, ah = window.innerHeight * d;
+    const s = pickScale(aw, ah, 216), w = aw / s;
+    return Math.max(216, Math.min(300, Math.floor(ah * 0.8 / s), Math.floor(w * 0.75)));
+  })();
+  const GROUND = H - 40;
+
   // ---------- constants (per-frame units at 60 fps) ----------
-  const H = 216, GROUND = 176, HERO_X = 40, HERO_W = 58;
+  const HERO_X = 40, HERO_W = 64;
   const STEP = 1 / 60;
   const GRAVITY = 0.6, JUMP_V = -10, DROP_V = -5, MIN_JUMP = 30, MAX_JUMP = 63, DROP_COEF = 3;
   const SPEED0 = 6, SPEED_MAX = 11.5, ACCEL = 0.001;
   const SCORE_COEF = 0.025, CLEAR_FRAMES = 140, NIGHT_EVERY = 700, NIGHT_FRAMES = 720, GAP_COEF = 0.6, MAX_GAP_COEF = 1.5;
   const WIG_AFTER = REC ? 330 : 700; // frames of play before wigs may appear
 
-  // ---------- palette: [day, night] ----------
+  // ---------- palette: monochrome world, lime hero ----------
   const PAL = {
-    k: ['#2b2533', '#0c0f1f'], K: ['#4a4152', '#1d2340'], g: ['#8c8494', '#56608a'],
-    n: ['#6d6675', '#3b4366'], N: ['#a8a1ae', '#6c76a0'], h: ['#cfc8bc', '#9aa3c4'], H: ['#fbf6ea', '#dfe6ff'],
-    t: ['#2b2533', '#0c0f1f'], T: ['#463d4f', '#1f2546'],
-    a: ['#1fc4dc', '#17a6c2'], A: ['#73eefc', '#5ad6ec'], d: ['#118aa6', '#0d7290'], D: ['#0b5876', '#084660'], r: ['#e2fdff', '#c8f6ff'],
-    w: ['#33405a', '#151e38'], v: ['#4d6182', '#26365a'], W: ['#f2fbff', '#e8f6ff'],
-    l: ['#ffe066', '#fff4b0'], R: ['#ff3d5a', '#ff4d68'], f: ['#ffb347', '#ffd27a'],
-    c: ['#ff7a2e', '#e66a2a'], C: ['#ffa463', '#ff9a5a'], e: ['#c9501a', '#a84418'], s: ['#efeae0', '#ffffff'], S: ['#ffffff', '#ffffff'],
-    q: ['#bdb4a6', '#5d6688'], Q: ['#dcd4c6', '#7c86aa'], p: ['#958c7f', '#454e72'], z: ['#ffc933', '#f0b92a'],
-    y: ['#e9b43a', '#e0a832'], Y: ['#ffd96b', '#ffd25e'], L: ['#fff4c4', '#fff3b8'], o: ['#b47f22', '#a8761e'], O: ['#6e4a14', '#4e3410'],
-    u: ['#d8b388', '#28335f'], U: ['#e6c8a0', '#334070'],
-    m: ['#e8c99c', '#1c2750'], M: ['#f5e2bf', '#2a3768'], j: ['#d8b283', '#141d42'],
-    b: ['#d4ab7c', '#2b3764'], B: ['#e0bb8e', '#36437a'],
+    k: '#535353',  // ink
+    g: '#acacac',  // secondary grey
+    l: '#dadada',  // light grey (clouds, vapor shading)
+    w: '#f7f7f7',  // background
+    x: '#ffffff',  // vapor core
+    // pickup (Higgsfield lime)
+    o: '#23271a', O: '#363c27',            // outline, trim
+    V: '#efffa6', A: '#d1fe17', a: '#b7e012', d: '#9dc20f', D: '#5e7508', // specular → deep shade
+    q: '#1b1f16', Q: '#3d4632', G: '#6f7a62', // window glass, glass top, glare
+    t: '#262626', T: '#3a3a3a', n: '#8a8a8a', N: '#c4c4c4', // tyre, sidewall, rim, rim highlight
+    X: '#ffffff', Z: '#7a1d1d',
   };
-  const BGC = {
-    sky: [['#f8eedc', '#f6e4c6', '#f3d8ae', '#efc995'], ['#0a1130', '#101a40', '#17234f', '#212f5e']],
-    sun: ['#fff6df', '#000000'], halo: ['#fbe6c0', '#000000'],
-    gL: ['#e6c592', '#3d4876'], g: ['#d3a975', '#2c3560'], gD: ['#bb8f5c', '#232b50'], gDD: ['#a87d4e', '#1b2242'],
-    dust: ['#ead3a9', '#5a6592'], puff: ['#fffaf0', '#d2dcff'], hud: ['#2b2533', '#e8ecff'], hudHi: ['#a08f7c', '#7f8bb8'],
-    star: ['#ffffff', '#fff8dc'], beam: ['#fff2b0', '#fff2b0'], streak: ['#fffaf0', '#9fb0ff'],
-  };
+  const BG = '#f7f7f7', INK = '#535353';
   const hex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
-  const mix = (a, b, t) => { const A = hex(a), B = hex(b); return `rgb(${A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(',')})`; };
+  const RGB = {}; for (const k in PAL) RGB[k] = hex(PAL[k]);
+  // night = invert + lift (like the original page): v -> (255 - v) + 26
+  const NIGHT_LIFT = 26;
+  const inv = c => c.map(v => Math.min(255, 255 - v + NIGHT_LIFT));
+  const css = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+  const NIGHT_BG = css(inv(hex(BG))), NIGHT_INK = css(inv(hex(INK)));
   let nightMix = 0;
-  const col = key => { const c = BGC[key] || PAL[key]; return mix(c[0], c[1], nightMix); };
 
   // ---------- pixel grids ----------
   function grid(w, h) { return Array.from({ length: h }, () => new Array(w).fill(null)); }
@@ -81,260 +94,220 @@
   function bake(key, g) {
     if (CACHE.has(key)) return CACHE.get(key);
     const h = g.length, w = g[0].length;
-    const out = { w, h, c: [] };
-    for (let v = 0; v < 2; v++) {
-      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-      const x2 = cv.getContext('2d');
-      for (let y = 0; y < h; y++) {
-        let x = 0;
-        while (x < w) {
-          const ch = g[y][x];
-          if (!ch) { x++; continue; }
-          let e = x; while (e < w && g[y][e] === ch) e++;
-          x2.fillStyle = PAL[ch] ? PAL[ch][v] : ch; x2.fillRect(x, y, e - x, 1); x = e;
-        }
-      }
-      out.c.push(cv);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const x2 = cv.getContext('2d'), img = x2.createImageData(w, h), d = img.data;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const ch = g[y][x]; if (!ch) continue;
+      const c = RGB[ch] || hex(ch), i = (y * w + x) * 4;
+      d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
     }
+    x2.putImageData(img, 0, 0);
+    const out = { w, h, c: cv };
     CACHE.set(key, out);
     return out;
   }
 
-  // ---------- hero: original off-road pickup ----------
-  function shade(y, top, bot) {
-    const r = (y - top) / Math.max(1, bot - top);
-    if (y === top) return 'r';
-    return r < 0.32 ? 'A' : r < 0.68 ? 'a' : r < 0.9 ? 'd' : 'D';
-  }
-  function buildTruck({ phase = 0, drop = 0, cabDrop = 0, thrust = false, blink = false, dead = false }) {
-    const Wd = 58, Hh = 35, g = grid(Wd, Hh);
-    const wheels = [13, 44], wcy = 26;
-    const lowTop = 13 + drop, lowBot = Math.min(25 + drop, 31);
-    // lower body + bed
-    for (let y = 9 + drop; y <= lowBot; y++) for (let x = 1; x <= 56; x++) {
-      if (y < lowTop && x > 25) continue;                    // bed walls only behind the cab
-      if (y < lowTop && x < 1) continue;
-      const top = x <= 25 ? 9 + drop : lowTop;
-      if ((x === 1 && (y === top || y === lowBot)) || (x === 56 && (y === top || y >= lowBot - 1)) || (x === 55 && y === lowBot)) continue;
-      g[y][x] = shade(y, top, lowBot);
+  // ---------- hero: original pickup (lime, the only colour in the world) ----------
+  const TRW = 64, TRH = 32, WHEELS = [14, 50], WCY = 24, WR = 7.4, NOZ = [27, 37], BELT0 = 12, SILL0 = 25;
+  function buildTruck({ phase = 0, drop = 0, cabDrop = 0, thrust = false, dead = false, lamp = true, white = false }) {
+    const g = grid(TRW, TRH);
+    const belt = BELT0 + drop, sill = Math.min(SILL0 + drop, 28), roof = 3 + drop + cabDrop;
+    const cabL = 28, cabR = 43, wsX = 53;
+    const edge = y => Math.floor(cabR + (y - roof) * (wsX - cabR) / Math.max(1, belt - roof));
+    const set = (y, x, c) => { if (y >= 0 && y < TRH && x >= 0 && x < TRW) g[y][x] = c; };
+    // lower body: 5-tone metallic ramp with a crisp specular line on the shoulder
+    for (let y = belt; y <= sill; y++) for (let x = 1; x <= 62; x++) {
+      if (y === belt && (x === 1 || x >= 61)) continue;
+      if (y === belt + 1 && x === 62) continue;
+      if (y === sill && (x === 1 || x === 62)) continue;
+      const r = y - belt;
+      g[y][x] = r <= 1 ? 'A' : r === 2 ? 'V' : r <= 4 ? 'A' : r <= 6 ? 'a' : r === 7 ? 'D' : r <= 10 ? 'd' : 'D';
     }
-    // bed inner lip (dark) to read as an open bed
-    for (let x = 3; x <= 24; x++) g[10 + drop][x] = 'D';
-    // cab: rounded box, front corner rounder
-    const cTop = 2 + drop + cabDrop, cBot = lowTop, cL = 26, cR = 52;
-    for (let y = cTop; y <= cBot; y++) for (let x = cL; x <= cR; x++) {
-      const rl = 4, rr = 7;
-      if (x < cL + rl && y < cTop + rl && Math.hypot(x - (cL + rl), y - (cTop + rl)) > rl + 0.3) continue;
-      if (x > cR - rr && y < cTop + rr && Math.hypot(x - (cR - rr), y - (cTop + rr)) > rr + 0.3) continue;
-      g[y][x] = shade(y, cTop, cBot + 10);
+    // cab with raked windshield
+    for (let y = roof; y < belt; y++) for (let x = cabL; x <= edge(y); x++) {
+      if (y === roof && (x <= cabL + 1 || x >= edge(y) - 1)) continue;
+      if (y === roof + 1 && x === cabL) continue;
+      g[y][x] = y <= roof + 1 ? 'V' : 'A';
     }
     // wheel arches
-    for (const cx of wheels) for (let y = 0; y < Hh; y++) for (let x = 0; x < Wd; x++) if (Math.hypot(x - cx, y - wcy) < 10.6 && y > lowTop - 2) g[y][x] = null;
-    outline(g, 'k');
-    // windows
-    const gT = cTop + 3, gB = cBot - 2;
-    for (let y = gT; y <= gB; y++) for (let x = cL + 3; x <= cR - 3; x++) {
-      const rr = 5;
-      if (x > cR - 3 - rr && y < gT + rr && Math.hypot(x - (cR - 3 - rr), y - (gT + rr)) > rr) continue;
-      if (x === 38 || x === 39) continue; // B-pillar
-      g[y][x] = y === gT ? 'v' : 'w';
-      if (!dead && ((x - y * 1.2 + 200) % 11 < 1.6 || (x - y * 1.2 + 200) % 11 < 2.6 && (x - y * 1.2 + 200) % 11 > 1.6 && y < gT + 3)) g[y][x] = 'W';
+    for (const cx of WHEELS) for (let y = belt + 1; y < TRH; y++) for (let x = 0; x < TRW; x++) if (Math.hypot(x - cx, y - WCY) < 9.2) g[y][x] = null;
+    outline(g, 'o');
+    // dark glass, B-pillar
+    for (let y = roof + 2; y <= belt - 2; y++) for (let x = cabL + 2; x <= edge(y) - 2; x++) {
+      if (x === 39 || x === 40) { g[y][x] = 'O'; continue; }
+      g[y][x] = y === roof + 2 ? 'Q' : 'q';
+      if (!dead && ((x - y * 1.4 + 300) % 14) < 1.2) g[y][x] = 'G';
     }
-    if (dead) { const cr = [[31, gT + 1], [32, gT + 2], [33, gT + 2], [34, gT + 3], [33, gT + 4], [42, gT + 1], [43, gT + 2], [44, gT + 3], [45, gT + 3], [44, gT + 4]]; for (const [x, y] of cr) if (y <= gB) g[y][x] = 'W'; }
-    // light bar
-    for (let x = 31; x <= 45; x++) g[cTop - 1][x] = 'K';
-    for (let x = 32; x <= 44; x++) g[cTop - 2][x] = (dead || blink) ? 'K' : (x % 3 === 2 ? 'k' : 'l');
-    g[cTop - 2][31] = 'k'; g[cTop - 2][45] = 'k';
-    // door seam, handle, rim-light on edges
-    for (let y = lowTop + 1; y <= lowBot - 2; y++) if (g[y][38] && g[y][38] !== 'k') g[y][38] = 'D';
-    for (let y = lowTop + 1; y <= lowBot - 2; y++) if (g[y][26] && g[y][26] !== 'k') g[y][26] = 'D';
-    g[lowTop + 3][41] = 'K'; g[lowTop + 3][42] = 'K'; g[lowTop + 3][43] = 'K';
-    // stripe decal
-    for (let x = 4; x <= 53; x++) { const y = lowTop + 6; if (g[y] && g[y][x] && g[y][x] !== 'k' && g[y][x] !== 'D') g[y][x] = 'r'; }
-    // lamps
-    g[lowTop + 2][55] = 'l'; g[lowTop + 2][56] = 'l'; g[lowTop + 3][55] = 'l'; g[lowTop + 3][56] = 'k';
-    g[11 + drop][1] = 'R'; g[12 + drop][1] = 'R';
-    // bumpers
-    for (let x = 51; x <= 57; x++) { g[lowBot][x] = x === 57 ? 'k' : 'N'; g[lowBot + 1] && (g[lowBot + 1][x] = 'n'); }
-    for (let x = 0; x <= 5; x++) { g[lowBot][x] = 'N'; g[lowBot + 1] && (g[lowBot + 1][x] = 'n'); }
-    // chassis + air thrusters
-    const cy0 = Math.min(lowBot + 1, 31);
-    for (let x = 23; x <= 34; x++) g[cy0][x] = 'K';
-    for (const nx of [24, 31]) {
-      for (let dy = 1; dy <= 2; dy++) for (let dx = 0; dx < 3; dx++) if (cy0 + dy < Hh) g[cy0 + dy][nx + dx] = dx === 1 ? 'N' : 'n';
-      if (cy0 + 3 < Hh) for (let dx = 0; dx < 3; dx++) g[cy0 + 3][nx + dx] = thrust ? (dx === 1 ? 'L' : 'f') : (dx === 1 ? 'k' : null);
+    if (dead) for (const [x, y] of [[33, 1], [34, 2], [35, 2], [36, 3], [35, 4], [45, 1], [46, 2], [47, 3], [48, 3], [47, 4]]) if (roof + 2 + y <= belt - 2) g[roof + 2 + y][x] = 'N';
+    // charcoal trim: fender flares, rocker, bumpers, bed/cab gap, handle
+    for (let y = belt + 1; y <= sill; y++) for (let x = 0; x < TRW; x++) {
+      if (!g[y][x] || g[y][x] === 'o') continue;
+      if (WHEELS.some(cx => { const d = Math.hypot(x - cx, y - WCY); return d >= 9.2 && d < 10.3; })) g[y][x] = 'O';
     }
-    // wheels: chunky lugs + rotating hub
-    for (const cx of wheels) for (let y = wcy - 9; y <= wcy + 9; y++) for (let x = cx - 9; x <= cx + 9; x++) {
-      if (y < 0 || y >= Hh) continue;
-      const dx = x - cx, dy = y - wcy, rr = Math.hypot(dx, dy), ang = Math.atan2(dy, dx);
-      const lug = Math.floor(((ang / (Math.PI * 2)) * 12 + phase / 4 + 12)) % 2 === 0;
+    for (let x = 2; x <= 61; x++) if (g[sill][x] && g[sill][x] !== 'o') g[sill][x] = 'O';
+    for (let y = belt + 1; y <= sill - 2; y++) if (g[y][27] && g[y][27] !== 'o') g[y][27] = 'o';
+    for (let y = belt + 3; y <= sill - 3; y++) if (g[y][41] && g[y][41] !== 'o' && g[y][41] !== 'O') g[y][41] = 'D';
+    set(belt + 4, 43, 'O'); set(belt + 4, 44, 'O');
+    for (let x = 59; x <= 63; x++) { set(sill - 1, x, x === 63 ? 'o' : 'O'); set(sill, x, 'o'); }
+    for (let x = 0; x <= 2; x++) { set(sill - 1, x, 'O'); set(sill, x, 'o'); }
+    for (let y = belt + 4; y <= belt + 7; y++) set(y, 62, 'O');
+    // small white headlight, thin red tail light
+    set(belt + 2, 61, lamp ? 'X' : 'N'); set(belt + 2, 62, lamp ? 'X' : 'N'); set(belt + 3, 62, lamp ? 'X' : 'N');
+    for (let y = belt + 1; y <= belt + 4; y++) set(y, 1, 'Z');
+    // chassis rail + air nozzles
+    for (let x = 21; x <= 43; x++) set(sill + 1, x, 'o');
+    for (const nx of NOZ) {
+      for (let dy = 2; dy <= 3; dy++) for (let dx = -1; dx <= 1; dx++) set(sill + dy, nx + dx, dx === 0 ? 'T' : 'o');
+      for (let dx = -1; dx <= 1; dx++) set(sill + 4, nx + dx, thrust ? (dx === 0 ? 'X' : 'N') : (dx === 0 ? 'o' : null));
+    }
+    // wheels: smooth tyre with tread notches, alloy rim with rotating spokes
+    for (const cx of WHEELS) for (let y = WCY - 8; y <= WCY + 8; y++) for (let x = cx - 8; x <= cx + 8; x++) {
+      if (y < 0 || y >= TRH) continue;
+      const dx = x - cx, dy = y - WCY, rr = Math.hypot(dx, dy), ang = Math.atan2(dy, dx);
       let ch = null;
-      if (rr <= 8.9 && rr > 7.6) ch = lug ? 't' : (rr < 8.3 ? 'T' : null);
-      else if (rr <= 7.6 && rr > 5.2) ch = (dx + dy < -4 && rr > 6.2) ? 'g' : 'K';
-      else if (rr <= 5.2 && rr > 4.1) ch = 'n';
-      else if (rr <= 4.1) {
-        ch = 'h';
-        if (dx + dy < -2) ch = 'H';
-        for (let i = 0; i < 4; i++) { const a = phase * Math.PI / 8 + i * Math.PI / 2; if (Math.abs(x - (cx + Math.cos(a) * 2.6)) < 0.75 && Math.abs(y - (wcy + Math.sin(a) * 2.6)) < 0.75) ch = 'k'; }
-        if (rr < 1.1) ch = 'k';
-      }
+      if (rr <= WR && rr > 5.3) {
+        ch = rr > 6.6 ? 't' : 'T';
+        if (rr > 6.7 && Math.floor(((ang / (Math.PI * 2)) * 16 + phase / 2 + 16)) % 2 === 0) ch = 'T';
+      } else if (rr <= 5.3 && rr > 1.4) {
+        ch = rr > 4.4 ? 'N' : 'n';
+        for (let i = 0; i < 5; i++) { const a = phase * Math.PI / 10 + i * Math.PI * 2 / 5; const px = Math.cos(a), py = Math.sin(a); const along = dx * px + dy * py, perp = Math.abs(-dx * py + dy * px); if (along > 1 && along < 4.6 && perp < 0.7) ch = 'N'; }
+        if (rr <= 4.4 && dx + dy > 2.5) ch = ch === 'N' ? 'n' : 'T';
+      } else if (rr <= 1.4) ch = 'o';
       if (ch) g[y][x] = ch;
     }
+    if (white) for (let y = 0; y < TRH; y++) for (let x = 0; x < TRW; x++) if (g[y][x]) g[y][x] = (g[y][x] === 'o' || g[y][x] === 't') ? 'k' : 'x';
     return g;
   }
   const truckSprite = o => bake('truck' + JSON.stringify(o), cropTop(buildTruck(o)));
   const STAND_G = buildTruck({}), STAND_C = cropTop(STAND_G);
-  const DUCK_G = cropTop(buildTruck({ drop: 7, cabDrop: 3 }));
+  const DUCK_G = cropTop(buildTruck({ drop: 6, cabDrop: 3 }));
   const STAND_H = STAND_C.length, DUCK_H = DUCK_G.length;
+  const CROP = TRH - STAND_H;                       // rows cropped from the top of the standing sprite
+  const NOZ_TIP = SILL0 + 4 - CROP;                 // nozzle tip row inside the standing sprite
+  const LAMP_Y = BELT0 + 2 - CROP;
   const HERO_BOX = autoBoxes(STAND_C, 5, 2), DUCK_BOX = autoBoxes(DUCK_G, 5, 2);
 
-  // ---------- obstacles ----------
-  function coneGrid(h = 26, rims = []) {
+  // ---------- obstacles (ink style) ----------
+  function coneGrid(h = 26, collars = []) {
     const w = 18, g = grid(w, h), base = h - 3;
     for (let y = 0; y < base; y++) {
-      let hw = 1.2 + (y / (base - 1)) * 6.6;
-      if (rims.some(r => y >= r && y < r + 2)) hw += 1.6;
-      for (let x = 0; x < w; x++) {
-        const d = x - 8.5;
-        if (Math.abs(d) > hw) continue;
-        const rel = (d + hw) / (2 * hw);
-        g[y][x] = rel < 0.3 ? 'C' : rel < 0.72 ? 'c' : 'e';
-        if (rims.some(r => y === r + 2)) g[y][x] = 'e';
-      }
+      let hw = 1.3 + (y / (base - 1)) * 6.2;
+      if (collars.some(r => y >= r && y < r + 2)) hw += 1.5;
+      for (let x = 0; x < w; x++) if (Math.abs(x - 8.5) <= hw) g[y][x] = 'k';
     }
-    for (let y = base; y < h; y++) for (let x = 0; x < w; x++) g[y][x] = y === base ? 'K' : 'k';
-    outline(g, 'k');
-    const stripes = h > 30 ? [Math.round(base * 0.28), Math.round(base * 0.62)] : [Math.round(base * 0.36), Math.round(base * 0.66)];
-    for (const sy of stripes) for (let y = sy; y < sy + 3; y++) for (let x = 0; x < w; x++) if (g[y][x] && g[y][x] !== 'k') {
-      const d = x - 8.5; g[y][x] = d < -1 ? 'S' : 's'; if (y === sy + 2 && d > 1) g[y][x] = 'q';
+    for (let y = base; y < h; y++) for (let x = 0; x < w; x++) g[y][x] = 'k';
+    const bands = h > 30 ? [Math.round(base * 0.3), Math.round(base * 0.64)] : [Math.round(base * 0.36), Math.round(base * 0.66)];
+    for (const sy of bands) for (let y = sy; y < sy + 2; y++) for (let x = 0; x < w; x++) {
+      const hw = 1.3 + (y / (base - 1)) * 6.2;
+      if (g[y][x] && Math.abs(x - 8.5) < hw - 1) g[y][x] = 'w';
     }
+    for (let x = 1; x < w - 1; x++) g[base][x] = 'g';
     return g;
   }
   function barrierGrid() {
     const w = 30, h = 22, g = grid(w, h);
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const inset = y < 13 ? 2 : Math.max(0, 2 - (y - 13));
-      if (x < inset || x >= w - inset) continue;
-      if ((y === 0 && (x <= inset || x >= w - inset - 1))) continue;
-      if (y >= 18 && ((x >= 6 && x <= 9) || (x >= 20 && x <= 23))) continue; // forklift slots
-      g[y][x] = y < 2 ? 'Q' : y < 13 ? 'q' : 'p';
-      if (y >= 3 && y <= 9) g[y][x] = ((x + y) % 8 < 4) ? 'c' : 's';
+    for (let y = 0; y < 9; y++) for (let x = 0; x < w; x++) {
+      if (y === 0 && (x === 0 || x === w - 1)) continue;
+      g[y][x] = 'k';
+      if (y >= 2 && y <= 6 && x >= 2 && x <= w - 3 && ((x + y) % 8 < 3)) g[y][x] = 'w';
     }
-    outline(g, 'k');
-    for (const rx of [5, 24]) { g[14][rx] = 'l'; g[14][rx + 1] = 'l'; g[15][rx] = 'z'; g[15][rx + 1] = 'z'; }
+    for (const lx of [4, 24]) for (let y = 9; y < h; y++) for (let x = lx; x < lx + 2; x++) g[y][x] = 'k';
+    for (const lx of [1, 21]) for (let y = h - 2; y < h; y++) for (let x = lx; x < lx + 8; x++) g[y][x] = 'k';
+    for (let x = 4; x <= 25; x++) g[13][x] = 'k';
+    g[1][3] = 'g'; g[1][4] = 'g'; g[1][25] = 'g'; g[1][26] = 'g';
     return g;
   }
-  function padGrid() {
+  function drumGrid() {
     const w = 24, h = 32, g = grid(w, h);
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      if ((x === 0 || x === w - 1) && (y === 0)) continue;
-      g[y][x] = x < 3 ? 'N' : x > w - 4 ? 'n' : 'g';
-      if (y >= 3 && y <= 10) g[y][x] = ((x + y) % 7 < 3) ? 'k' : 'z';
-      if (y === 11 || y === 2) g[y][x] = 'K';
+    for (let y = 2; y < h - 2; y++) for (let x = 0; x < w; x++) {
+      const hw = 9 + (y > 4 ? 1 : 0) + (y > 6 ? 1 : 0);
+      if (Math.abs(x - 11.5) <= hw) g[y][x] = 'k';
     }
-    outline(g, 'k');
-    for (const [x, y] of [[3, 14], [w - 4, 14], [3, h - 4], [w - 4, h - 4]]) { g[y][x] = 'H'; g[y + 1][x] = 'n'; }
-    for (let y = 14; y < h - 2; y++) g[y][12] = 'n';
+    for (let y = 0; y < 2; y++) for (let x = 7; x <= 16; x++) g[y][x] = 'k';
+    for (let y = h - 2; y < h; y++) for (let x = 0; x < w; x++) g[y][x] = 'k';
+    for (const sy of [9, 17]) for (let y = sy; y < sy + 3; y++) for (let x = 2; x <= 21; x++) g[y][x] = 'w';
+    for (let y = 4; y < h - 4; y++) if (g[y][17] === 'k') g[y][17] = 'g';
     return g;
   }
-  const WIG_BODY = [
-    '.....OOOOOO..........................',
-    '...OOYYLLYYOO........................',
-    '..OYYLLYYYYYYOO......................',
-    '.OYLYYYyyyYYYYYOOOOO.................',
-    '.OYYyyoyyyyyYYLLYYYYOOOOOO...........',
-    'OYYyyyoyyyyyyyyyYYYYLLYYYYOOOOO......',
-    'OYyyyyyoyyyyyyoyyyyyyYYYYYYYYYYOOO...',
-    'OYyyyyyyoyyyoyyyyyoyyyyyyyyyyyyYYYO..',
-    'OyyyyoyyyyyyoyyyyyoyyyyyoyyyyyyyyyyO.',
-    '.OyyyyoyyyyoyyyyyoyyyyyoyyyyyoyyyyO..',
-    '.OoyyyyyyyoyyyyyoyyyyyoyyyyyoyyyoO...',
-    '..OooyyyoyyyyyoyyyyyoyyyyyoyyyooO....',
-    '...OOooooooooooooooooooooooooooO.....',
-    '.....OoOOoOOoOOoOOoOOoOOoOOoOOO......',
-    '......O..O..O..O..O..O..O..O.........',
+  // flying hairpiece: tall pompadour crest with a curl, combed-back strands, solid dark roots and a lace fringe
+  const WIG_MASK = [
+    '....######..................................',
+    '..##########................................',
+    '.#############..............................',
+    '################............................',
+    '#################...........................',
+    '.######ww#########..........................',
+    '..####w##w#########.........................',
+    '...###w#ww#########.........................',
+    '...####ww##########.........................',
+    '...################.#.......................',
+    '...##########################...............',
+    '...###############################..........',
+    '...######################################...',
+    '...#######################################..',
+    '....#####################################...',
+    '.....##################################.....',
+    '......RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR......',
+    '.......R.R.R.R.R.R.R.R.R.R.R.R.R.R.R........',
   ];
   function wigGrid(frame, coreOnly) {
-    const w = 48, h = 24, g = grid(w, h), ox = 6, oy = 5;
-    WIG_BODY.forEach((row, y) => { for (let x = 0; x < row.length; x++) if (row[x] !== '.') g[oy + y][ox + x] = row[x]; });
+    const w = 56, h = 27, g = grid(w, h), ox = 6, oy = 6;
+    WIG_MASK.forEach((row, y) => { for (let x = 0; x < row.length; x++) if (row[x] !== '.') g[oy + y][ox + x] = row[x] === '#' ? 'g' : row[x] === 'R' ? 'k' : 'k'; });
+    outline(g, 'k', new Set(['g']));
+    WIG_MASK.forEach((row, y) => { for (let x = 0; x < row.length; x++) {
+      if (g[oy + y][ox + x] !== 'g') continue;
+      // strands follow the swoop: arc over the crest, then run back almost flat
+      const s = y + 9 * Math.exp(-(((x - 9) / 9) ** 2)) - 0.08 * x;
+      if (((Math.floor(s * 0.75) % 3) + 3) % 3 === 0 && (x * 5 + y * 3) % 13 > 1) g[oy + y][ox + x] = 'k';
+      else if (y < 9 && (x + y) % 4 === 0) g[oy + y][ox + x] = 'l';
+    } });
     if (!coreOnly) {
-      const ang = [-0.95, -0.3, 0.45, -0.3][frame];               // flap: up, mid, down, mid
-      const cells = [];
+      // two-frame flap: strand wings up / down
+      const up = frame === 0;
       const wing = (rx, ry, dir) => {
-        for (const spread of [-0.3, 0, 0.3]) {
-          const a = ang + spread, len = 13 - Math.abs(spread) * 9;
-          for (let i = 0; i <= 30; i++) {
-            const t = i / 30, x = rx + dir * Math.cos(a) * len * t, y = ry + Math.sin(a) * len * t + Math.sin(t * Math.PI) * 1.2;
-            const r = 1.5 * (1 - t) + 0.5;
-            for (let yy = Math.floor(y - r); yy <= Math.ceil(y + r); yy++) for (let xx = Math.floor(x - r); xx <= Math.ceil(x + r); xx++) {
-              if (yy < 0 || yy >= h || xx < 0 || xx >= w) continue;
-              if (Math.hypot(xx - x, yy - y) <= r && !g[yy][xx]) { g[yy][xx] = yy <= y - 0.5 ? 'Y' : 'y'; cells.push([xx, yy]); }
-            }
+        for (const [len, sp] of [[13, -0.25], [11, 0.05], [9, 0.35]]) {
+          const a = (up ? -0.95 : 0.55) + sp;
+          for (let i = 0; i <= 26; i++) {
+            const t = i / 26, x = Math.round(rx + dir * Math.cos(a) * len * t), y = Math.round(ry + Math.sin(a) * len * t + Math.sin(t * Math.PI) * (up ? 1.5 : -1.2));
+            if (y >= 0 && y < h && x >= 0 && x < w && !g[y][x]) g[y][x] = 'k';
+            if (t < 0.5 && y + 1 < h && x >= 0 && x < w && !g[y + 1][x]) g[y + 1][x] = 'k';
           }
         }
       };
-      wing(ox + 3, oy + 10, -1);
-      wing(ox + 33, oy + 8, 1);
-      for (const [x, y] of cells) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const xx = x + dx, yy = y + dy;
-        if (xx >= 0 && yy >= 0 && xx < w && yy < h && !g[yy][xx]) g[yy][xx] = 'O';
-      }
+      wing(ox + 4, oy + 12, -1);
+      wing(ox + 41, oy + 13, 1);
     }
     return g;
   }
   const OB = {
-    cone: coneGrid(26), stack: coneGrid(38, [12, 23]), barrier: barrierGrid(), pad: padGrid(),
-    wig: [0, 1, 2, 3].map(f => wigGrid(f)),
+    cone: coneGrid(26), stack: coneGrid(38, [12, 23]), barrier: barrierGrid(), drum: drumGrid(),
+    wig: [0, 1].map(f => wigGrid(f)),
   };
   const BOX = {
-    cone: autoBoxes(OB.cone, 4, 1), stack: autoBoxes(OB.stack, 5, 1), barrier: autoBoxes(OB.barrier, 6, 1), pad: autoBoxes(OB.pad, 8, 1),
+    cone: autoBoxes(OB.cone, 4, 1), stack: autoBoxes(OB.stack, 5, 1), barrier: autoBoxes(OB.barrier, 6, 1), drum: autoBoxes(OB.drum, 8, 1),
     wig: autoBoxes(wigGrid(0, true), 4, 2),
   };
   const TYPES = [
     { id: 'cone', w: 18, h: 26, minSpeed: 0, multiSpeed: 6.6, maxSize: 3, minGap: 120 },
     { id: 'stack', w: 18, h: 38, minSpeed: 0, multiSpeed: 8, maxSize: 2, minGap: 120 },
     { id: 'barrier', w: 30, h: 22, minSpeed: 6.4, multiSpeed: 99, maxSize: 1, minGap: 130 },
-    { id: 'pad', w: 24, h: 32, minSpeed: 0, multiSpeed: 9, maxSize: 2, minGap: 120 },
-    { id: 'wig', w: 48, h: 24, minSpeed: 0, multiSpeed: 999, maxSize: 1, minGap: 150, flying: true },
+    { id: 'drum', w: 24, h: 32, minSpeed: 0, multiSpeed: 9, maxSize: 2, minGap: 120 },
+    { id: 'wig', w: 56, h: 27, minSpeed: 0, multiSpeed: 999, maxSize: 1, minGap: 150, flying: true },
   ];
-  const WIG_Y = [GROUND - 26, GROUND - 47, GROUND - 86]; // low (hop), mid (duck), high (pass)
+  const WIG_Y = [GROUND - 29, GROUND - 45, GROUND - 91]; // low (hop), mid (duck), high (pass)
 
-  // background sprites
-  function towerGrid(hgt) {
-    const w = 22, g = grid(w, hgt + 6);
-    const top = 6;
-    for (let y = top; y < hgt + 6; y++) { g[y][2] = 'u'; g[y][10] = 'u'; }
-    for (let y = top; y < hgt + 2; y += 8) for (let i = 0; i <= 8; i++) { if (y + i < hgt + 6) { g[y + i][2 + i] = 'u'; g[y + i][10 - i] = 'u'; } g[y][2 + i] = 'u'; }
-    for (let x = 0; x <= 12; x++) { g[top][x] = 'U'; g[top + 1][x] = 'u'; }
-    for (let y = 2; y < top; y++) g[y][6] = 'u';
-    for (let x = 11; x <= 15; x++) g[top + 10][x] = 'u';
-    // rocket
-    for (let y = top + 6; y < hgt + 6; y++) for (let x = 15; x <= 19; x++) g[y][x] = x === 15 ? 'U' : 'u';
-    g[top + 4][17] = 'u'; for (let x = 16; x <= 18; x++) g[top + 5][x] = 'u';
-    for (let x = 13; x <= 21; x++) for (let y = hgt + 2; y < hgt + 6; y++) g[y][x] = 'u';
-    return g;
-  }
-  function rockGrid(w, h) {
-    const g = grid(w, h);
+  // clouds: light-grey outline, background fill (like the original)
+  function cloudGrid(seed) {
+    const r = mulberry(seed), w = 46, h = 14, g = grid(w, h);
+    const bumps = [[10, 9, 5], [20, 6, 6], [30, 8, 5], [37, 10, 4]].map(([x, y, rr]) => [x + Math.floor(r() * 3) - 1, y, rr + Math.floor(r() * 2)]);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const nx = (x - w / 2) / (w / 2), ny = (h - y) / h;
-      if (nx * nx + ny * ny * 1.1 <= 1.0 + 0.08 * Math.sin(x * 1.7)) g[y][x] = (x < w * 0.45 && y < h * 0.6) ? 'B' : 'b';
+      if (y >= h - 3 && x >= 4 && x <= 42) { g[y][x] = 'w'; continue; }
+      if (bumps.some(([bx, by, br]) => Math.hypot(x - bx, (y - by) * 1.1) <= br)) g[y][x] = 'w';
     }
+    outline(g, 'l');
     return g;
   }
-  function cactusGrid(h) {
-    const w = 15, g = grid(w, h);
-    const fill = (x0, y0, x1, y1) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (y >= 0 && y < h) g[y][x] = x === x0 ? 'B' : 'b'; };
-    fill(6, 1, 8, h - 1); g[0][7] = 'b';
-    fill(1, Math.round(h * 0.25), 3, Math.round(h * 0.55)); fill(1, Math.round(h * 0.55), 6, Math.round(h * 0.55) + 1);
-    fill(11, Math.round(h * 0.15), 13, Math.round(h * 0.45)); fill(8, Math.round(h * 0.45), 13, Math.round(h * 0.45) + 1);
-    return g;
-  }
-  const BG = {
-    towers: [bake('tw1', towerGrid(58)), bake('tw2', towerGrid(74)), bake('tw3', towerGrid(48))],
-    rocks: [bake('r1', rockGrid(22, 9)), bake('r2', rockGrid(14, 6)), bake('r3', rockGrid(30, 12)), bake('c1', cactusGrid(24)), bake('c2', cactusGrid(18))],
-  };
+  const CLOUDS = [bake('cl1', cloudGrid(3)), bake('cl2', cloudGrid(11)), bake('cl3', cloudGrid(29))];
 
   // 5x7 pixel font for HUD, drawn at 2x
   const FONT = {
@@ -364,118 +337,44 @@
   const ctx = cv.getContext('2d');
   const buf = document.createElement('canvas');
   const b = buf.getContext('2d');
+  const vbuf = document.createElement('canvas');
+  const vctx = vbuf.getContext('2d');
   const msg = document.getElementById('msg');
   const hint = document.getElementById('hint');
-  let W = 480, scale = 3;
-  const skyCache = { w: 0, c: null };
+  let W = 480, scale = 3, HUDM = 10;
+  const tiles = { w: 0 };
 
   function layout() {
     const dpr = window.devicePixelRatio || 1;
-    const availW = window.innerWidth * dpr, availH = window.innerHeight * dpr;
-    let s = SCALE_PARAM || Math.floor(Math.min(availH * 0.62 / H, availW / 400));
-    if (s < 1) s = Math.min(availW / 400, availH * 0.62 / H);
-    W = Math.max(320, Math.min(1100, Math.floor(availW / s)));
+    const aw = window.innerWidth * dpr, ah = window.innerHeight * dpr;
+    const s = pickScale(aw, ah, H);
+    W = Math.max(200, Math.min(1100, Math.floor(aw / s)));
     scale = s;
-    buf.width = W; buf.height = H;
+    HUDM = Math.max(8, Math.ceil(16 * dpr / s));
+    buf.width = W; buf.height = H; vbuf.width = W; vbuf.height = H;
     cv.width = Math.round(W * s); cv.height = Math.round(H * s);
     cv.style.width = (cv.width / dpr) + 'px';
     cv.style.height = (cv.height / dpr) + 'px';
     ctx.imageSmoothingEnabled = false;
-    skyCache.w = 0;
     if (G) render(); // keep the frame visible after a resize (matters in ?rec=1, where nothing else redraws)
   }
 
-  // ---------- sky / far layers (baked for day and night, crossfaded) ----------
+  // ---------- ground tile: one ink line with bumps, dashes and pebbles ----------
   const BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
-  function bakeSky() {
-    const hgt = GROUND + 2;
-    skyCache.c = [0, 1].map(v => {
-      const c = document.createElement('canvas'); c.width = W; c.height = hgt;
-      const x2 = c.getContext('2d');
-      const stops = BGC.sky[v], seg = hgt / (stops.length - 1);
-      for (let y = 0; y < hgt; y++) {
-        // flat bands with a short ordered-dither seam between them (classic pixel-art sky)
-        const f = y / seg, i = Math.min(stops.length - 2, Math.floor(f)), t = f - i;
-        const tt = Math.max(0, Math.min(1, (t - 0.72) / 0.28));
-        if (tt <= 0) { x2.fillStyle = stops[i]; x2.fillRect(0, y, W, 1); continue; }
-        for (let x = 0; x < W; x += 1) {
-          const th = (BAYER[y & 3][x & 3] + 0.5) / 16;
-          x2.fillStyle = tt > th ? stops[i + 1] : stops[i];
-          x2.fillRect(x, y, 1, 1);
-        }
-      }
-      if (v === 0) { // sun with dithered halo
-        const sx = Math.round(W * 0.74), sy = 54;
-        for (let y = sy - 30; y <= sy + 30; y++) for (let x = sx - 30; x <= sx + 30; x++) {
-          const d = Math.hypot(x - sx, y - sy);
-          if (d <= 17) { x2.fillStyle = BGC.sun[0]; x2.fillRect(x, y, 1, 1); }
-          else if (d <= 26 && (BAYER[y & 3][x & 3] / 16) < (26 - d) / 12) { x2.fillStyle = BGC.halo[0]; x2.fillRect(x, y, 1, 1); }
-        }
-      }
-      return c;
-    });
-    // far mesas tile (periodic)
-    const r = mulberry(SEED ^ 0xabc);
-    const TW = 720, heights = new Array(TW).fill(0);
-    let x = 0;
-    while (x < TW) {
-      const len = 40 + Math.floor(r() * 110), hh = 16 + Math.floor(r() * 34), slope = 1 + Math.floor(r() * 3);
-      for (let i = 0; i < len && x + i < TW; i++) {
-        const edge = Math.min(i, len - 1 - i);
-        heights[x + i] = Math.max(heights[x + i], Math.min(hh, edge * slope + 3));
-      }
-      x += len - Math.floor(r() * 30) + Math.floor(r() * 40);
+  function bakeGround() {
+    const GW = 600, GH = H - GROUND + 2, g = grid(GW, GH), r = mulberry(SEED ^ 0x51ed);
+    for (let x = 0; x < GW; x++) g[2][x] = 'k';
+    for (let i = 0; i < 9; i++) { // little bumps and dips in the line
+      const x0 = Math.floor(r() * (GW - 20)), len = 4 + Math.floor(r() * 10), up = r() < 0.6;
+      for (let x = x0; x < x0 + len; x++) { if (up) { g[1][x] = 'k'; g[2][x] = (x === x0 || x === x0 + len - 1) ? 'k' : null; } else { g[2][x] = null; g[3][x] = 'k'; } }
     }
-    for (let i = 0; i < 30; i++) { const t = i / 30; heights[TW - 30 + i] = Math.round(heights[TW - 30 + i] * (1 - t) + heights[i] * t); }
-    skyCache.mesa = [0, 1].map(v => {
-      const c = document.createElement('canvas'); c.width = TW; c.height = 60;
-      const x2 = c.getContext('2d');
-      for (let xx = 0; xx < TW; xx++) {
-        const hh = heights[xx]; if (!hh) continue;
-        for (let yy = 60 - hh; yy < 60; yy++) {
-          const dtop = yy - (60 - hh);
-          let ch = dtop < 2 ? 'M' : 'm';
-          // right-facing slopes in shadow, left-facing slopes lit
-          const slope = heights[(xx + 3) % TW] - heights[(xx - 3 + TW) % TW];
-          if (slope < -1 && dtop > 0) ch = 'j';
-          else if (slope > 1 && dtop > 0) ch = 'M';
-          if (yy % 11 === 6 && dtop > 3 && BAYER[yy & 3][xx & 3] < 6) ch = 'j';
-          x2.fillStyle = PAL[ch][v]; x2.fillRect(xx, yy, 1, 1);
-        }
-      }
-      return c;
-    });
-    skyCache.mesaW = TW;
-    // ground tile
-    const GW = 256, GH = H - GROUND;
-    const gr = mulberry(SEED ^ 0x51ed);
-    const specks = [];
-    for (let i = 0; i < 70; i++) specks.push([Math.floor(gr() * GW), 3 + Math.floor(gr() * (GH - 4)), 1 + Math.floor(gr() * 3), gr()]);
-    skyCache.ground = [0, 1].map(v => {
-      const c = document.createElement('canvas'); c.width = GW; c.height = GH;
-      const x2 = c.getContext('2d');
-      for (let y = 0; y < GH; y++) for (let xx = 0; xx < GW; xx++) {
-        let k = 'g';
-        if (y === 0) k = 'gL';
-        else if (y === 1) k = BAYER[y & 3][xx & 3] < 8 ? 'gL' : 'g';
-        else if (y >= GH - 6) k = 'gDD';
-        else if (y >= GH - 10) k = (BAYER[y & 3][xx & 3] / 16) < (y - (GH - 10)) / 4 ? 'gDD' : 'gD';
-        else if (y > GH * 0.5) k = (BAYER[y & 3][xx & 3] / 16) < (y - GH * 0.5) / (GH * 0.5 - 10) ? 'gD' : 'g';
-        x2.fillStyle = BGC[k][v]; x2.fillRect(xx, y, 1, 1);
-      }
-      for (const [sx, sy, sw, t] of specks) {
-        x2.fillStyle = BGC[t < 0.5 ? 'gD' : 'gDD'][v]; x2.fillRect(sx, sy, sw, 1);
-        if (t > 0.8) { x2.fillStyle = BGC.gL[v]; x2.fillRect(sx, sy - 1, sw, 1); }
-      }
-      return c;
-    });
-    skyCache.w = W;
+    for (let i = 0; i < 46; i++) {
+      const x = Math.floor(r() * (GW - 4)), y = 5 + Math.floor(r() * (GH - 9)), len = r() < 0.5 ? 1 : 1 + Math.floor(r() * 3);
+      for (let k = 0; k < len; k++) g[y][x + k] = r() < 0.35 ? 'g' : 'k';
+    }
+    tiles.ground = bake('ground' + H, g);
+    tiles.w = W;
   }
-  function drawBaked(arr, x, y) {
-    b.drawImage(arr[0], x, y);
-    if (nightMix > 0) { b.globalAlpha = nightMix; b.drawImage(arr[1], x, y); b.globalAlpha = 1; }
-  }
-  function drawSprite(sp, x, y) { drawBaked(sp.c, Math.round(x), Math.round(y)); }
 
   // ---------- audio ----------
   let AC = null, master = null;
@@ -549,26 +448,48 @@
     G = {
       mode: intro ? 'intro' : 'play', frame: 0, playFrames: 0, deadFrames: 0, introFrames: 0,
       hero: newHero(), speed: SPEED0, dist: 0, bgDist: 0, score: 0, lastMilestone: 0,
-      obstacles: [], lastTypes: [], parts: [], streaks: [],
-      night: false, nightFrames: 0, nextNight: NIGHT_EVERY, stars: [],
+      obstacles: [], lastTypes: [], parts: [], blobs: [], clouds: [],
+      night: false, nightFrames: 0, nextNight: NIGHT_EVERY, stars: [], moon: 0,
       flash: 0, jumpHeld: false, duckHeld: false, plan: null, squash: 0, shake: 0, boom: null,
+      hitStop: 0, hitFlash: 0, knock: 0, knockV: 0,
     };
+    const r = mulberry(SEED ^ 0xc10d);
+    for (let i = 0; i < 4; i++) G.clouds.push({ x: 40 + i * 170 + r() * 80, y: 18 + Math.floor(r() * (GROUND - 110)), i: i % 3 });
     makeStars();
   }
   function makeStars() {
     const r = mulberry(SEED ^ (G.nextNight * 7));
     G.stars = [];
-    for (let i = 0; i < 40; i++) G.stars.push({ x: Math.floor(r() * 1100), y: 4 + Math.floor(r() * (GROUND - 70)), tw: Math.floor(r() * 120), big: r() < 0.18 });
+    for (let i = 0; i < 26; i++) G.stars.push({ x: Math.floor(r() * 1100), y: 8 + Math.floor(r() * (GROUND - 90)), tw: Math.floor(r() * 120), big: r() < 0.2 });
   }
   function start() { if (G.mode !== 'intro') return; G.mode = 'play'; G.playFrames = 0; doJump(); }
   function restart() { newGame(false); }
+  // compressed-air vapor: metaball blobs rendered as a dithered pixel cloud with an ink outline
+  function blob(x, y, vx, vy, r0, r1, grow, max, dens, kind = 'vapor', drift = 0.3) {
+    G.blobs.push({ x, y, vx, vy, r0, r1, grow, max, dens, kind, drift, age: 0 });
+  }
+  function hopBurst() {
+    const base = GROUND - 2, cx = HERO_X + (NOZ[0] + NOZ[1]) / 2;
+    for (const nx of NOZ) {
+      const x = HERO_X + nx;
+      blob(x, base - 7, 0, 1.4, 3, 8, 4, 22, 1.5);                        // jets slamming into the ground
+      blob(x, base - 2, 0, 0.3, 4, 10, 5, 34, 1.4);
+    }
+    // the main billow: a cluster of overlapping puffs so the outline reads as one lumpy cloud
+    for (let i = 0; i < 7; i++) {
+      const ox = (i - 3) * 6 + (fxRng() - 0.5) * 4;
+      blob(cx + ox, base - 2 - fxRng() * 6, ox * 0.09, -0.25 - fxRng() * 0.45, 4, 11 + fxRng() * 7, 8 + fxRng() * 4, 50 + fxRng() * 18, 1.25);
+    }
+    for (let i = 0; i < 6; i++) {                                          // ground-hugging roll-out both ways
+      const dir = i % 2 ? 1 : -1, sp = 0.9 + fxRng() * 1.4;
+      blob(cx + dir * (12 + fxRng() * 8), base - 1, dir * sp, -0.1 - fxRng() * 0.2, 3, 8 + fxRng() * 5, 9, 40 + fxRng() * 18, 1.1);
+    }
+    for (let i = 0; i < 3; i++) blob(cx - 12 + fxRng() * 24, base - 12, -0.4 + fxRng() * 0.8, -0.5 - fxRng() * 0.4, 3, 7 + fxRng() * 4, 10, 40, 0.95);
+  }
   function doJump() {
     if (heroJump(G.hero, G.speed)) {
       SFX.jump(); ev('jump');
-      for (let i = 0; i < 8; i++) {
-        const nx = HERO_X + (i % 2 ? 25 : 32) + 1;
-        part(nx + fxRng() * 2, GROUND - 2, -1.6 + fxRng() * 3.2 - G.speed * 0.15, -0.2 - fxRng() * 0.9, 16 + fxRng() * 10, 'puff', 3);
-      }
+      hopBurst();
     }
   }
   function part(x, y, vx, vy, life, color, size, grav = 0) { G.parts.push({ x, y, vx, vy, life: 0, max: life, color, size, grav }); }
@@ -715,36 +636,48 @@
     simTime += STEP;
     G.frame++;
     const nt = G.night ? 1 : 0;
-    nightMix += Math.sign(nt - nightMix) * Math.min(Math.abs(nt - nightMix), 1 / 40);
+    nightMix += Math.sign(nt - nightMix) * Math.min(Math.abs(nt - nightMix), 1 / 36);
+    if (G.hitStop > 0) { G.hitStop--; return; }      // crash hit-stop
     if (G.shake > 0) G.shake--;
+    if (G.hitFlash > 0) G.hitFlash--;
+    if (G.boom) G.boom.f++;
+    const h = G.hero;
     if (G.mode === 'intro') {
       G.introFrames++;
       if (BOT && G.introFrames >= 60) start();
-      updateParts(0);
+      updateParts(0); updateBlobs(0);
       return;
     }
     if (G.mode === 'over') {
       G.deadFrames++;
-      updateParts(0);
-      if (G.deadFrames % 6 === 0 && G.deadFrames < 90) part(HERO_X + 36 + fxRng() * 6, G.hero.y + 6, -0.2, -0.5 - fxRng() * 0.3, 40, 'smoke', 4);
+      // small bounce + knock-back, then a lingering leak from the nozzles
+      if (h.y < GROUND_Y || h.vy < 0) {
+        h.y += h.vy; h.vy += GRAVITY;
+        if (h.y >= GROUND_Y) { h.y = GROUND_Y; if (h.vy > 2) { h.vy = -h.vy * 0.3; landDust(0.6); } else h.vy = 0; }
+      }
+      G.knock += G.knockV; G.knockV *= 0.8;
+      if (G.deadFrames % 10 === 0 && G.deadFrames < 110) blob(HERO_X + G.knock + NOZ[(G.deadFrames / 10) % 2], GROUND - 4, -0.3, -0.5, 2, 6, 10, 40, 0.75, 'vapor', 0);
+      updateParts(0); updateBlobs(0);
       if (BOT && G.deadFrames > 110) restart();
       return;
     }
     G.playFrames++;
     if (BOT) botThink();
-    const h = G.hero;
-    if (h.jumping && h.vy < -2 && G.playFrames % 2 === 0) for (const nx of [25, 32]) part(HERO_X + nx + 1, h.y + STAND_H - 1, -G.speed * 0.25, 1.2 + fxRng() * 0.6, 12, 'puff', 2);
+    // thrust column on take-off, then a small continuous steam wisp from the nozzles while airborne
+    if (h.jumping) {
+      for (const nx of NOZ) {
+        if (h.vy < -5) { blob(HERO_X + nx, h.y + NOZ_TIP + 4, 0, 3.4, 4, 9, 4, 18, 1.4); blob(HERO_X + nx, (h.y + NOZ_TIP + GROUND) / 2, 0, 2, 4, 8, 4, 16, 1.3); }
+        else if (G.playFrames % 2 === 0) blob(HERO_X + nx, h.y + NOZ_TIP + 2, -0.2, 1.0, 2, 5, 6, 18, 1.0, 'wisp');
+      }
+    }
     const landed = heroStep(h);
     if (landed) {
       if (!G.duckHeld) h.ducking = false;
       G.squash = 7;
-      for (let i = 0; i < 7; i++) part(HERO_X + 4 + fxRng() * 50, GROUND - 1, (fxRng() - 0.5) * 2.4 - 1, -0.4 - fxRng() * 0.8, 18 + fxRng() * 8, 'dust', 3);
+      landDust(1);
     }
     if (G.squash > 0) G.squash--;
-    if (!h.jumping && G.playFrames % 3 === 0) {
-      part(HERO_X + 4, GROUND - 2, -G.speed * 0.35 - fxRng(), -0.25 - fxRng() * 0.5, 16 + fxRng() * 8, 'dust', 2 + (fxRng() < 0.4 ? 1 : 0));
-      if (G.playFrames % 6 === 0) part(HERO_X + 36, GROUND - 2, -G.speed * 0.3 - fxRng(), -0.2 - fxRng() * 0.4, 12, 'dust', 2);
-    }
+    if (!h.jumping && G.playFrames % 7 === 0) part(HERO_X + 8, GROUND - 1, -G.speed * 0.3 - fxRng(), -0.8 - fxRng() * 0.8, 18, fxRng() < 0.5 ? 'ink' : 'grey', 1, 0.12);
 
     if (G.playFrames > 20) G.speed = Math.min(SPEED_MAX, G.speed + ACCEL);
     const sp = G.speed;
@@ -768,38 +701,55 @@
     if (sc !== G.score) {
       G.score = sc;
       if (sc > 0 && sc % 100 === 0 && sc !== G.lastMilestone) { G.lastMilestone = sc; G.flash = 60; SFX.point(); ev('point100'); }
-      if (sc >= G.nextNight) { G.nextNight += NIGHT_EVERY; G.night = true; G.nightFrames = NIGHT_FRAMES; makeStars(); }
+      if (sc >= G.nextNight) { G.nextNight += NIGHT_EVERY; G.night = true; G.nightFrames = NIGHT_FRAMES; G.moon = (G.moon + 1) % 4; makeStars(); }
     }
     if (G.flash > 0) G.flash--;
     if (G.night) { G.nightFrames--; if (G.nightFrames <= 0) G.night = false; }
 
-    // speed streaks
-    if (sp > 8.2 && fxRng() < (sp - 8) * 0.12) G.streaks.push({ x: W + 10, y: 36 + Math.floor(fxRng() * (GROUND - 80)), len: 14 + Math.floor(fxRng() * 36), v: sp * (2 + fxRng()) });
-    for (const s of G.streaks) s.x -= s.v;
-    G.streaks = G.streaks.filter(s => s.x + s.len > 0);
-    updateParts(sp);
+    for (const c of G.clouds) {
+      c.x -= sp * 0.2;
+      if (c.x < -50) { c.x = W + 20 + fxRng() * 220; c.y = 18 + Math.floor(fxRng() * (GROUND - 110)); c.i = Math.floor(fxRng() * 3); }
+    }
+    updateParts(sp); updateBlobs(sp);
+  }
+  function landDust(k) {
+    for (const wx of WHEELS) for (const dir of [-1, 1]) blob(HERO_X + G.knock + wx + dir * 3, GROUND - 2, dir * (1 + fxRng() * 1.6) * k, -0.25, 2, (5 + fxRng() * 3) * (0.6 + 0.4 * k), 6, 26, 1, 'dust', 0.35);
+    if (k >= 1) blob(HERO_X + (NOZ[0] + NOZ[1]) / 2, GROUND - 3, 0, -0.2, 3, 9, 8, 28, 0.95);
+    for (let i = 0; i < 5 * k; i++) part(HERO_X + 6 + fxRng() * 54, GROUND - 1, (fxRng() - 0.5) * 2.6, -1 - fxRng() * 1.4, 22, fxRng() < 0.6 ? 'ink' : 'grey', 1, 0.16);
   }
   function updateParts(sp) {
-    for (const p of G.parts) { p.x += p.vx - sp * 0.1; p.y += p.vy; p.vy = p.vy * 0.9 + p.grav; p.vx *= 0.96; p.life++; if (p.grav && p.y > GROUND - 1) { p.y = GROUND - 1; p.vy *= -0.35; p.vx *= 0.7; } }
+    for (const p of G.parts) { p.x += p.vx - sp * 0.1; p.y += p.vy; p.vy = p.vy * 0.95 + p.grav; p.vx *= 0.97; p.life++; if (p.grav && p.y > GROUND) { p.y = GROUND; p.vy *= -0.3; p.vx *= 0.6; } }
     G.parts = G.parts.filter(p => p.life < p.max);
   }
-  function gameOver(o) {
-    G.mode = 'over'; G.deadFrames = 0; G.plan = null; G.hero.ducking = false;
-    SFX.crash(); ev('crash');
-    G.shake = 16;
-    const cx = Math.max(HERO_X + HERO_W - 6, o.x + 4), cy = Math.min(G.hero.y + 16, GROUND - 10);
-    G.boom = { x: cx, y: cy, f: 0 };
-    const cols = ['fire', 'fire2', 'spark', 'ink', 'acc'];
-    for (let i = 0; i < 34; i++) {
-      const a = fxRng() * Math.PI * 2, v = 1 + fxRng() * 3.6;
-      part(cx, cy, Math.cos(a) * v, Math.sin(a) * v - 1.4, 30 + fxRng() * 30, cols[i % cols.length], 1 + (fxRng() < 0.5 ? 1 : 0), 0.14);
+  const blobR = bl => bl.r0 + (bl.r1 - bl.r0) * (1 - Math.pow(1 - Math.min(1, bl.age / bl.grow), 3));
+  const blobS = bl => bl.dens * (bl.age < bl.max * 0.4 ? 1 : Math.max(0, 1 - (bl.age - bl.max * 0.4) / (bl.max * 0.6)));
+  function updateBlobs(sp) {
+    for (const bl of G.blobs) {
+      bl.age++; bl.x += bl.vx - sp * bl.drift; bl.y += bl.vy; bl.vx *= 0.92; bl.vy *= 0.9;
+      const r = blobR(bl); if (bl.y > GROUND - r * 0.45) bl.y = GROUND - r * 0.45;
     }
-    for (let i = 0; i < 8; i++) part(cx + (fxRng() - 0.5) * 14, cy + (fxRng() - 0.5) * 10, (fxRng() - 0.5) * 0.8, -0.3 - fxRng() * 0.5, 50, 'smoke', 5);
+    G.blobs = G.blobs.filter(bl => bl.age < bl.max);
+  }
+  function gameOver(o) {
+    const h = G.hero;
+    G.mode = 'over'; G.deadFrames = 0; G.plan = null; h.ducking = false;
+    SFX.crash(); ev('crash');
+    G.shake = 14; G.hitStop = 3; G.hitFlash = 2;
+    h.vy = Math.min(h.vy, 0) - 3.2; h.jumping = false; G.knockV = -1.5; G.knock = 0;
+    const cx = Math.max(HERO_X + HERO_W - 6, o.x + 4), cy = Math.min(h.y + 14, GROUND - 10);
+    G.boom = { x: cx, y: cy, f: 0 };
+    for (let i = 0; i < 5; i++) blob(cx - 6 + fxRng() * 10, cy + (fxRng() - 0.5) * 8, -0.5 - fxRng() * 1.5, -0.6 + fxRng() * 0.8, 3, 10 + fxRng() * 6, 7, 46 + fxRng() * 16, 1.2, 'vapor', 0);
+    for (let i = 0; i < 4; i++) blob(HERO_X + (NOZ[0] + NOZ[1]) / 2 + (fxRng() - 0.5) * 30, GROUND - 3, (fxRng() - 0.5) * 3, -0.3, 3, 10 + fxRng() * 4, 8, 44, 1.1, 'vapor', 0);
+    for (let i = 0; i < 6; i++) blob(cx - 20 + fxRng() * 40, GROUND - 2, (fxRng() - 0.5) * 3, -0.3, 2, 7 + fxRng() * 3, 7, 30, 1, 'dust', 0);
+    for (let i = 0; i < 16; i++) {
+      const a = -Math.PI * fxRng(), v = 1.2 + fxRng() * 2.6;
+      part(cx, cy, Math.cos(a) * v, Math.sin(a) * v - 0.8, 34 + fxRng() * 20, i % 3 ? 'ink' : 'grey', 1 + (fxRng() < 0.4 ? 1 : 0), 0.16);
+    }
     if (G.score > hiScore) { hiScore = G.score; try { localStorage.setItem('hopper.hi', String(hiScore)); } catch (e) { /* storage unavailable */ } }
   }
 
   // ---------- render ----------
-  const PCOL = { puff: 'puff', dust: 'dust', fire: 'l', fire2: 'f', spark: 'S', ink: 'k', acc: 'a', smoke: 'g' };
+  const PCOL = { ink: PAL.k, grey: PAL.g };
   function text(str, x, y, color, sc = 2) {
     b.fillStyle = color;
     for (const ch of str) {
@@ -808,169 +758,206 @@
       x += 6 * sc;
     }
   }
+  // night is a dithered horizontal wipe of an inverted palette (no alpha dissolve)
+  function nightEdge() {
+    const m = nightMix;
+    return G.night ? { from: 'right', e: W - m * (W + 10) } : { from: 'left', e: m * (W + 10) };
+  }
+  function isNight(x, y, ne) {
+    if (nightMix <= 0) return false;
+    if (nightMix >= 1) return true;
+    const th = (BAYER[y & 3][x & 3] + 0.5) / 16 * 8;
+    return ne.from === 'right' ? x > ne.e + th : x < ne.e - th;
+  }
+  function invertPass(ne) {
+    if (nightMix <= 0) return;
+    const ops = [['difference', '#ffffff'], ['lighter', `rgb(${NIGHT_LIFT},${NIGHT_LIFT},${NIGHT_LIFT})`]];
+    for (const [op, fill] of ops) {
+      b.globalCompositeOperation = op; b.fillStyle = fill;
+      if (nightMix >= 1) { b.fillRect(0, 0, W, H); continue; }
+      const e = Math.round(ne.e);
+      if (ne.from === 'right') { if (e + 9 < W) b.fillRect(Math.max(0, e + 9), 0, W - Math.max(0, e + 9), H); }
+      else if (e - 9 > 0) b.fillRect(0, 0, Math.min(W, e - 9), H);
+      for (let x = Math.max(0, e - 9); x <= Math.min(W - 1, e + 9); x++) for (let y = 0; y < H; y++) if (isNight(x, y, ne)) b.fillRect(x, y, 1, 1);
+    }
+    b.globalCompositeOperation = 'source-over';
+  }
+  function drawBlobs(kind, nightAware, ne) {
+    const list = [];
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const bl of G.blobs) {
+      if (bl.kind !== kind) continue;
+      const r = blobR(bl), s = blobS(bl); if (s <= 0.02) continue;
+      list.push([bl.x, bl.y, r, s, bl.dens]);
+      x0 = Math.min(x0, bl.x - r); x1 = Math.max(x1, bl.x + r); y0 = Math.min(y0, bl.y - r); y1 = Math.max(y1, bl.y + r);
+    }
+    if (!list.length) return;
+    x0 = Math.max(0, Math.floor(x0) - 1); x1 = Math.min(W - 1, Math.ceil(x1) + 1);
+    y0 = Math.max(0, Math.floor(y0) - 1); y1 = Math.min(GROUND + 3, Math.ceil(y1) + 1);
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1; if (bw <= 0 || bh <= 0) return;
+    const F = new Float32Array(bw * bh), Wt = new Float32Array(bw * bh);
+    for (const [bx, by, r, s, dn] of list) {
+      const ax = Math.max(x0, Math.floor(bx - r)), bx2 = Math.min(x1, Math.ceil(bx + r));
+      const ay = Math.max(y0, Math.floor(by - r)), by2 = Math.min(y1, Math.ceil(by + r));
+      for (let y = ay; y <= by2; y++) for (let x = ax; x <= bx2; x++) {
+        const dx = x - bx, dy = (y - by) * 1.2, d2 = (dx * dx + dy * dy) / (r * r);
+        if (d2 >= 1) continue;
+        const w = (1 - d2) * (1 - d2), i = (y - y0) * bw + (x - x0);
+        F[i] += s * w; Wt[i] += dn * w;
+      }
+    }
+    const IN = new Uint8Array(bw * bh);
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+      const i = y * bw + x, gx = x + x0, gy = y + y0;
+      let f = F[i]; if (gy > GROUND) f *= Math.max(0, 1 - (gy - GROUND) / 4);
+      if (f > 0.3 + ((BAYER[gy & 3][gx & 3] + 0.5) / 16) * 0.14) IN[i] = 1;
+    }
+    const img = vctx.createImageData(bw, bh), d = img.data;
+    const vapor = kind !== 'dust', soft = kind === 'wisp';
+    const C = { k: RGB.k, g: RGB.g, l: RGB.l, w: RGB.w, x: RGB.x };
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) {
+      const i = y * bw + x; if (!IN[i]) continue;
+      const gx = x + x0, gy = y + y0, th = (BAYER[gy & 3][gx & 3] + 0.5) / 16;
+      const fade = Math.min(1, F[i] / Math.max(1e-3, Wt[i]));
+      const edge = !(x > 0 && IN[i - 1]) || !(x < bw - 1 && IN[i + 1]) || !(y > 0 && IN[i - bw]) || !(y < bh - 1 && IN[i + bw]);
+      let c;
+      if (edge) c = th < fade * 1.5 ? (vapor && !soft ? C.k : C.g) : (vapor ? C.l : null);
+      else {
+        if (fade < 0.45 && th > fade * 2.2) continue;            // dissolve as it thins out
+        const f = F[i], above = y >= 2 ? F[i - 2 * bw] : 0, below = y < bh - 2 ? F[i + 2 * bw] : 0;
+        if (vapor) {
+          c = f >= 1.0 ? C.x : (th < (f - 0.55) / 0.45 ? C.x : C.l);
+          if (above - below > 0.16 && f < 1.25) c = th < 0.5 ? C.g : C.l;   // shaded underside
+        } else c = th < 0.35 ? C.l : C.w;
+      }
+      if (!c) continue;
+      if (nightAware && isNight(gx, gy, ne)) c = inv(c);
+      const o = i * 4; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
+    }
+    vctx.putImageData(img, 0, 0);
+    b.drawImage(vbuf, 0, 0, bw, bh, x0, y0, bw, bh);
+  }
+  function drawSprite(sp, x, y) { b.drawImage(sp.c, Math.round(x), Math.round(y)); }
   function render() {
-    if (skyCache.w !== W) bakeSky();
-    const pageBg = mix(BGC.sky[0][0], BGC.sky[1][0], nightMix);
+    if (tiles.w !== W || !tiles.ground) bakeGround();
+    const ne = nightEdge();
+    const dark = nightMix > 0.5;
+    const pageBg = dark ? NIGHT_BG : BG;
     document.body.style.background = pageBg;
-    document.documentElement.style.setProperty('--fg', mix('#2b2533', '#e8ecff', nightMix));
-    document.documentElement.style.setProperty('--muted', mix('#7a6a5a', '#9aa6d0', nightMix));
+    document.documentElement.style.setProperty('--fg', dark ? NIGHT_INK : INK);
+    document.documentElement.style.setProperty('--muted', dark ? '#9a9a9a' : '#8a8a8a');
 
-    const f = G.frame;
-    // sky
-    drawBaked(skyCache.c, 0, 0);
-    // stars + moon
-    if (nightMix > 0.02) {
-      b.globalAlpha = nightMix;
-      b.fillStyle = col('star');
+    const f = G.frame, h = G.hero;
+    b.fillStyle = BG; b.fillRect(0, 0, W, H);
+    // stars + moon exist only inside the night region (drawn in ink, the inversion lights them)
+    if (nightMix > 0) {
+      b.fillStyle = PAL.k;
       for (const s of G.stars) {
-        if (s.x > W) continue;
-        const tw = (f + s.tw) % 120 < 14;
+        if (s.x > W || !isNight(s.x, s.y, ne)) continue;
         b.fillRect(s.x, s.y, 1, 1);
-        if (s.big || tw) { b.globalAlpha = nightMix * 0.55; b.fillRect(s.x - 1, s.y, 3, 1); b.fillRect(s.x, s.y - 1, 1, 3); b.globalAlpha = nightMix; }
+        if (s.big || (f + s.tw) % 120 < 14) { b.fillRect(s.x - 1, s.y, 3, 1); b.fillRect(s.x, s.y - 1, 1, 3); }
       }
-      const mx = Math.round(W * 0.74), my = 46;
-      for (let y = -12; y <= 12; y++) for (let x = -12; x <= 12; x++) {
-        const d = Math.hypot(x, y), d2 = Math.hypot(x + 6, y - 3);
-        if (d <= 11 && d2 > 10) { b.fillStyle = d > 9.6 ? '#cfd6ff' : '#fff8e2'; b.fillRect(mx + x, my + y, 1, 1); }
-      }
-      b.globalAlpha = 1;
-    }
-    // far mesas (parallax 0.06)
-    const mW = skyCache.mesaW, mo = Math.floor(G.bgDist * 0.06) % mW;
-    for (let x = -mo; x < W; x += mW) drawBaked(skyCache.mesa, x, GROUND - 58);
-    // launch towers (parallax 0.16) with blinking beacons
-    const TP = 900, tOff = (G.bgDist * 0.16) % TP;
-    const towerPos = [[120, 0], [520, 1], [700, 2]];
-    for (const [tx, ti] of towerPos) {
-      for (let rep = -1; rep <= Math.ceil(W / TP); rep++) {
-        const x = Math.round(tx - tOff + rep * TP);
-        const sp = BG.towers[ti];
-        if (x > W || x + sp.w < 0) continue;
-        drawSprite(sp, x, GROUND - sp.h + 2);
-        if ((f + ti * 23) % 70 < 26) {
-          b.fillStyle = col('R'); b.fillRect(x + 6, GROUND - sp.h + 2, 1, 2);
-          if (nightMix > 0.1) { b.globalAlpha = 0.35 * nightMix; b.fillRect(x + 4, GROUND - sp.h + 1, 5, 4); b.globalAlpha = 1; }
-        }
+      const mx = Math.round(W * 0.72), my = Math.round(GROUND * 0.22);
+      const ph = [5, 3, -3, -5][G.moon];
+      for (let y = -10; y <= 10; y++) for (let x = -10; x <= 10; x++) {
+        const dd = Math.hypot(x, y), d2 = Math.hypot(x + ph, y - 1);
+        if (dd <= 9.5 && d2 > 8.5 && isNight(mx + x, my + y, ne)) { b.fillStyle = dd > 8.3 ? PAL.g : PAL.k; b.fillRect(mx + x, my + y, 1, 1); }
       }
     }
-    // mid rocks & cacti (parallax 0.42)
-    const RP = 640, rOff = (G.bgDist * 0.42) % RP;
-    const rockPos = [[30, 0], [150, 3], [260, 1], [380, 4], [470, 2], [560, 3]];
-    for (const [rx, ri] of rockPos) for (let rep = -1; rep <= Math.ceil(W / RP); rep++) {
-      const x = Math.round(rx - rOff + rep * RP), sp = BG.rocks[ri];
-      if (x > W || x + sp.w < 0) continue;
-      drawSprite(sp, x, GROUND - sp.h + 1);
-    }
+    // sparse clouds
+    for (const c of G.clouds) drawSprite(CLOUDS[c.i], c.x, c.y);
     // ground
-    const gOff = Math.floor(G.dist) % 256;
-    for (let x = -gOff; x < W; x += 256) drawBaked(skyCache.ground, x, GROUND);
-    // speed streaks
-    if (G.streaks.length) {
-      b.fillStyle = col('streak'); b.globalAlpha = 0.7;
-      for (const s of G.streaks) b.fillRect(Math.round(s.x), s.y, s.len, 1);
-      b.globalAlpha = 1;
-    }
-    // obstacles (soft ground shadow first)
-    b.fillStyle = col('gD');
-    for (const o of G.obstacles) if (!o.type.flying) b.fillRect(Math.round(o.x) - 1, GROUND + 1, o.w + 2, 1);
+    const gOff = Math.floor(G.dist) % 600;
+    for (let x = -gOff; x < W; x += 600) drawSprite(tiles.ground, x, GROUND - 2);
+    // obstacles
     for (const o of G.obstacles) {
       if (o.type.flying) {
-        const fr = Math.floor(o.anim / 6) % 4;
-        drawSprite(bake('wig' + fr, OB.wig[fr]), o.x, o.y + (fr === 2 ? 1 : 0));
+        const fr = Math.floor(o.anim / 10) % 2;
+        drawSprite(bake('wig' + fr, OB.wig[fr]), o.x, o.y + (fr ? 2 : 0));
       } else {
         const sp = bake(o.type.id, OB[o.type.id]);
         for (let i = 0; i < o.size; i++) drawSprite(sp, o.x + i * o.type.w, o.y);
       }
     }
-    // hero shadow
-    const h = G.hero;
+    // airborne shadow dash
     const air = GROUND_Y - h.y;
-    b.fillStyle = col('gD');
-    const shw = Math.max(18, 52 - air * 0.35);
-    b.fillRect(Math.round(HERO_X + 29 - shw / 2), GROUND + 1, Math.round(shw), 1);
-    // particles behind hero
-    drawParts();
-    // hero
-    const phase = G.mode === 'play' ? Math.floor(G.dist / 3) % 8 : 0;
-    let spr, hy;
-    if (G.mode === 'over') { spr = truckSprite({ dead: true, drop: 1 }); hy = h.y + (STAND_H - spr.h); }
-    else if (h.ducking && !h.jumping) { spr = truckSprite({ phase, drop: 7, cabDrop: 3 }); hy = GROUND + 1 - DUCK_H; }
-    else {
-      let drop = 0;
-      if (G.squash > 0) drop = G.squash > 4 ? 3 : G.squash > 2 ? 2 : 1;
-      else if (G.mode === 'play' && !h.jumping) drop = Math.floor(G.dist / 22) % 2;
-      const thrust = h.jumping && h.vy < 1;
-      const blink = G.mode === 'intro' ? (G.introFrames % 50 < 25) : (nightMix > 0.5 && f % 40 < 20);
-      spr = truckSprite({ phase, drop, thrust, blink });
-      hy = h.y + (STAND_H - spr.h);
+    if (air > 2) { const shw = Math.max(16, 50 - air * 0.4); b.fillStyle = PAL.g; b.fillRect(Math.round(HERO_X + 32 - shw / 2), GROUND + 2, Math.round(shw), 1); }
+    // particles + landing dust
+    for (const p of G.parts) {
+      const k = p.life / p.max, s = Math.max(1, Math.round(p.size * (1 - k * 0.5)));
+      b.fillStyle = PCOL[p.color] || PAL.k; b.fillRect(Math.round(p.x), Math.round(p.y), s, s);
     }
-    drawSprite(spr, HERO_X, hy);
-    // night headlight beam
-    if (nightMix > 0.02 && G.mode !== 'over') {
-      const ducked = h.ducking && !h.jumping;
-      const lx = HERO_X + 57, ly = (ducked ? hy - (35 - DUCK_H) + 22 : h.y + 15 + (G.squash > 0 ? 2 : 0));
-      b.fillStyle = col('beam');
-      for (let i = 0; i < 150; i++) {
-        const a = nightMix * (0.32 - i / 150 * 0.3);
-        if (a <= 0) break;
-        b.globalAlpha = a;
-        const half = 2 + i * 0.16;
-        b.fillRect(lx + i, Math.round(ly - half * 0.6), 1, Math.round(half * 1.6));
-      }
-      b.globalAlpha = 1;
+    drawBlobs('dust', false, ne);
+    // impact: short ink rays
+    if (G.boom && G.boom.f < 8) {
+      b.fillStyle = PAL.k;
+      const r0 = 4 + G.boom.f * 1.5, r1 = r0 + 5 - G.boom.f * 0.5;
+      for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2 + 0.2; for (let r = r0; r < r1; r++) b.fillRect(Math.round(G.boom.x + Math.cos(a) * r), Math.round(G.boom.y + Math.sin(a) * r), 1, 1); }
     }
-    // explosion ring
-    if (G.boom && G.boom.f < 14) {
-      const r = 3 + G.boom.f * 2.2;
-      b.fillStyle = G.boom.f < 5 ? '#fff4c4' : '#ffb347';
-      for (let i = 0; i < 48; i++) { const a = i / 48 * Math.PI * 2; b.fillRect(Math.round(G.boom.x + Math.cos(a) * r), Math.round(G.boom.y + Math.sin(a) * r * 0.8), 1, 1); }
-      if (G.boom.f < 3) { b.fillStyle = '#fffbe8'; b.beginPath(); b.fillRect(G.boom.x - 6, G.boom.y - 5, 12, 10); }
-      G.boomDraw = true;
-    }
-    // HUD
+    // HUD (original style: HI 00000 00000, blink at every 100)
     if (G.mode !== 'intro') {
       const pad = n => String(Math.min(99999, n)).padStart(5, '0');
-      const sx = W - 12 * 5 - 10;
+      const sx = W - HUDM - 58;
       let show = true, val = G.score;
       if (G.flash > 0) { val = G.lastMilestone; show = Math.floor(G.flash / 8) % 2 === 1; }
-      if (show) text(pad(val), sx, 10, col('hud'));
-      if (hiScore > 0) { text('HI', sx - 12 * 9, 10, col('hudHi')); text(pad(hiScore), sx - 12 * 6.5, 10, col('hudHi')); }
+      if (show) text(pad(val), sx, HUDM, PAL.k);
+      if (hiScore > 0) { text('HI', sx - 12 * 9, HUDM, PAL.g); text(pad(hiScore), sx - 12 * 6.5, HUDM, PAL.g); }
     }
     if (G.mode === 'over') {
-      const gx = Math.round(W / 2 - (9 * 12 - 2) / 2), gy = 58;
-      text('GAME OVER', gx + 1, gy + 1, mix('#e9cfa2', '#0b1230', nightMix));
-      text('GAME OVER', gx, gy, col('hud'));
-      const rx = Math.round(W / 2), ry = gy + 38;
-      b.fillStyle = col('hud');
+      const gx = Math.round(W / 2 - (9 * 12 - 2) / 2), gy = Math.round(GROUND * 0.34);
+      text('GAME OVER', gx, gy, PAL.k);
+      const rx = Math.round(W / 2), ry = gy + 40;
+      b.fillStyle = PAL.k;
       for (let y = -11; y <= 11; y++) for (let x = -11; x <= 11; x++) {
         const d = Math.hypot(x, y), a = Math.atan2(y, x);
         if (d >= 7.5 && d <= 10.5 && !(a > -1.25 && a < -0.15)) b.fillRect(rx + x, ry + y, 1, 1);
       }
       for (let i = 0; i < 6; i++) b.fillRect(rx + 4 + i - 2, ry - 9 + i - 1, 7 - i, 1); // arrow head
     }
+    invertPass(ne);
 
-    // compose with screen shake
+    // hero: the only colour in the world (drawn after the inversion)
+    const phase = G.mode === 'play' ? Math.floor(G.dist / 3) % 10 : 0;
+    let spr, hy, hx = HERO_X, heroDrop = 0;
+    if (G.mode === 'over') {
+      spr = truckSprite(G.hitFlash > 0 ? { dead: true, drop: 1, white: true } : { dead: true, drop: 1, lamp: false });
+      hy = Math.round(h.y) + (STAND_H - spr.h); hx = HERO_X + Math.round(G.knock);
+    } else if (h.ducking && !h.jumping) { spr = truckSprite({ phase, drop: 6, cabDrop: 3 }); hy = GROUND + 1 - DUCK_H; }
+    else {
+      let drop = 0;
+      if (G.squash > 0) drop = G.squash > 4 ? 2 : 1;
+      else if (G.mode === 'play' && !h.jumping) drop = Math.floor(G.dist / 26) % 2;
+      const thrust = h.jumping && h.vy < 1;
+      const lamp = G.mode === 'intro' ? (G.introFrames % 50 < 25) : true;
+      spr = truckSprite({ phase, drop, thrust, lamp }); heroDrop = drop;
+      hy = h.y + (STAND_H - spr.h);
+    }
+    drawBlobs('wisp', false, ne);
+    drawSprite(spr, hx, hy);
+    // night headlight beam
+    if (nightMix > 0.5 && G.mode !== 'over') {
+      const ducked = h.ducking && !h.jumping;
+      const lx = HERO_X + 63, ly = hy + BELT0 + 2 + (ducked ? 6 : heroDrop) - (TRH - spr.h);
+      b.fillStyle = '#ffffff';
+      for (let i = 0; i < 120; i++) {
+        const a = 0.16 - i / 120 * 0.15; if (a <= 0) break;
+        b.globalAlpha = a; const half = 1 + i * 0.14;
+        b.fillRect(lx + i, Math.round(ly - half * 0.6), 1, Math.round(half * 1.6));
+      }
+      b.globalAlpha = 1;
+    }
+    drawBlobs('vapor', false, ne);
+
+    // compose with screen shake (underlay the unshifted frame so no page strip shows)
     let sx = 0, sy = 0;
-    if (G.shake > 0) { const amp = G.shake / 16 * 3; sx = Math.round(Math.sin(G.frame * 2.7) * amp); sy = Math.round(Math.cos(G.frame * 3.3) * amp * 0.6); }
+    if (G.shake > 0) { const amp = G.shake / 14 * 3; sx = Math.round(Math.sin(G.frame * 2.7) * amp); sy = Math.round(Math.cos(G.frame * 3.3) * amp * 0.6); }
     ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = pageBg; ctx.fillRect(0, 0, cv.width, cv.height);
+    if (sx || sy) ctx.drawImage(buf, 0, 0, W, H, 0, 0, cv.width, cv.height);
     ctx.drawImage(buf, 0, 0, W, H, sx * scale, sy * scale, cv.width, cv.height);
 
     const a = G.mode === 'intro' ? 1 : Math.max(0, 1 - G.playFrames / 24);
     msg.style.opacity = a.toFixed(3);
     hint.style.visibility = BOT ? 'hidden' : 'visible';
-  }
-  function drawParts() {
-    for (const p of G.parts) {
-      const k = p.life / p.max;
-      const key = PCOL[p.color];
-      b.fillStyle = BGC[key] ? col(key) : col(key);
-      const s = Math.max(1, Math.round(p.size * (p.color === 'smoke' ? (0.5 + k) : (1 - k * 0.7))));
-      if (p.color === 'smoke' || p.color === 'puff' || p.color === 'dust') b.globalAlpha = Math.max(0, 1 - k) * (p.color === 'smoke' ? 0.55 : 0.9);
-      const px = Math.round(p.x - s / 2), py = Math.round(p.y - s / 2);
-      if (s >= 3) { b.fillRect(px + 1, py, s - 2, s); b.fillRect(px, py + 1, s, s - 2); } else b.fillRect(px, py, s, s);
-      b.globalAlpha = 1;
-    }
   }
 
   // ---------- loop ----------
@@ -982,7 +969,7 @@
     if (!last) last = ts;
     const dt = Math.min(0.1, (ts - last) / 1000); last = ts;
     acc += dt;
-    while (acc >= STEP) { tick(); if (G.boom) G.boom.f++; acc -= STEP; }
+    while (acc >= STEP) { tick(); acc -= STEP; }
     render();
     requestAnimationFrame(frame);
   }
@@ -1003,7 +990,7 @@
     window.__step = (dt) => {
       dt = Math.max(0, +dt || 0);
       stepTime += dt; racc += dt;
-      while (racc >= STEP - 1e-9) { tick(); if (G.boom) G.boom.f++; racc -= STEP; }
+      while (racc >= STEP - 1e-9) { tick(); racc -= STEP; }
       render();
       return window.__state();
     };

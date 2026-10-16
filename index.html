@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Hopper</title>
 <style>
-  :root { --fg: #2b2533; --muted: #7a6a5a; }
+  :root { --fg: #535353; --muted: #8a8a8a; }
   html, body { margin: 0; height: 100%; }
   body {
-    background: #f8eedc; color: var(--fg);
+    background: #f7f7f7; color: var(--fg);
     font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
     overflow: hidden; touch-action: none;
@@ -25,6 +25,11 @@
   #msg kbd { font: inherit; font-size: 12px; padding: 1px 7px; border: 1.5px solid currentColor; border-radius: 5px; }
   #hint { font-size: 14px; margin: 0; }
   @media (max-width: 600px) { #msg .try { display: none; } }
+  /* portrait phones: centre the band (message above it), like the original page */
+  @media (orientation: portrait) {
+    #stage { justify-content: center; }
+    #top { flex: 0 0 auto; padding-bottom: 20px; }
+  }
 </style>
 </head>
 <body>
