@@ -31,7 +31,7 @@
     const s = pickScale(aw, ah, 216), w = aw / s;
     return Math.max(216, Math.min(300, Math.floor(ah * 0.8 / s), Math.floor(w * 0.75)));
   })();
-  const GROUND = H - 40;
+  const GROUND = H - 66;   // a deep filled Mars ground band
 
   // ---------- constants (per-frame units at 60 fps) ----------
   const HERO_X = 36, HERO_W = 80;
@@ -41,15 +41,16 @@
   const SCORE_COEF = 0.025, CLEAR_FRAMES = 20, NIGHT_EVERY = 700, NIGHT_FRAMES = 720, GAP_COEF = 0.6, MAX_GAP_COEF = 1.5;
   const WIG_AFTER = REC ? 330 : 700; // frames of play before wigs may appear
 
-  // ---------- palette: flat Mars (5 tones), lime hero, golden hairpieces ----------
+  // ---------- palette: unmistakable Mars — butterscotch sky, filled rust ground, red hills; lime hero, golden hairpieces ----------
   const PAL = {
-    w: '#efcfae',  // dusty butterscotch sky / background
-    k: '#6e2f1f',  // dark rust ink (obstacles, HUD)
-    u: '#a8472c',  // rust-red ground line and pebbles
-    g: '#d29a76',  // pale rust for far outlines
-    l: '#f8e4cc',  // light dust (clouds, dust puffs)
-    s: '#fbf3e6',  // small pale sun
-    x: '#ffffff',  // vapor core
+    s1: '#d9a27a', s2: '#dea880', s3: '#e3ae85', s4: '#e8b48a',  // sky bands, top → horizon
+    hz: '#efc39c',                                               // dust haze near the horizon, dust devils
+    p: '#d8e8f0', p2: '#e9c3a0',                                 // small pale-blue setting sun + halo
+    f0: '#c76a48', f1: '#a9503a', f2: '#8e3f2c',                  // far hills: lit rim, fill, shadow side
+    hl: '#d06a45', r: '#b5462b', R: '#8a2f1d', RR: '#6e2414',    // ground: highlight, base, shadow, deep shadow
+    k: '#3a1a10', c: '#f4e6cf', cs: '#d9c2a2',                   // obstacles: dark outline, cream ink, cream shade
+    b: '#4a2414', b2: '#8a5a3e', dl: '#e3a27c',                  // HUD brown, HI brown, light dust
+    w: '#ece8e4', x: '#ffffff',                                   // vapor light, vapor core
     // car (Higgsfield lime)
     o: '#22261a', O: '#363c27',
     V: '#efffa6', A: '#d1fe17', a: '#b7e012', d: '#9dc20f', D: '#5e7508',
@@ -59,13 +60,18 @@
     // straw-blond hairpiece
     L: '#fff3c4', Y: '#f3cf63', y: '#d7a838', h: '#9a6a1e', H: '#4b2c12',
   };
+  // night set for every world tone (the car, hair and vapor are drawn after the fade and keep their colours)
+  const NIGHTC = {
+    s1: '#0a0405', s2: '#13070a', s3: '#1f0b0e', s4: '#2e1013', hz: '#3e1618', p: '#13070a', p2: '#13070a',
+    f0: '#4a1a14', f1: '#38120e', f2: '#2a0d0a', hl: '#6a2416', r: '#521a10', R: '#3a110a', RR: '#2a0b06',
+    k: '#1a0806', c: '#ecd6bb', cs: '#b89c80', b: '#f1dcc0', b2: '#b08870', dl: '#6a2a1a',
+  };
   const hex = h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
   const RGB = {}; for (const k in PAL) RGB[k] = hex(PAL[k]);
   const css = c => `rgb(${c[0]},${c[1]},${c[2]})`;
   const lerpC = (a, b, t) => [0, 1, 2].map(i => Math.round(a[i] + (b[i] - a[i]) * t));
   // night: the same five tones, faded in steps toward a maroon-to-black sky (the hero and hair keep their colours)
-  const NIGHT = { k: hex('#e4a98c'), u: hex('#b45a3e'), g: hex('#7a3a30'), l: hex('#4a2023') };
-  const SKY_TOP = hex('#0b0507'), SKY_HOR = hex('#3d1619'), SOIL_N = hex('#1a0b0c');
+  const NIGHT = {}; for (const k in NIGHTC) NIGHT[k] = hex(NIGHTC[k]);
   const NSTEP = 7;
   let nightMix = 0;
   // ---------- pixel grids ----------
@@ -258,8 +264,14 @@
     for (const [x, y] of [[10, 17], [11, 16], [12, 16], [13, 17], [13, 18], [12, 19], [11, 19]]) if (g[y][x]) g[y][x] = 'H';
     return g;
   }
+  function creamify(g) {     // ink → cream body, background bands → dark bands, then a dark outline
+    for (const row of g) for (let x = 0; x < row.length; x++) row[x] = row[x] === 'k' ? 'c' : row[x] === 'w' ? 'R' : row[x] === 'g' ? 'cs' : row[x];
+    outline(g, 'k', new Set(['c', 'cs']));
+    for (let y = 1; y < g.length; y++) for (let x = 1; x < g[0].length; x++) if (g[y][x] === 'c' && g[y][x - 1] && g[y][x - 1] !== 'k' && (x > g[0].length / 2 + 1) && g[y][x + 1] === 'k') g[y][x] = 'cs';
+    return g;
+  }
   const OB = {
-    cone: coneGrid(26), stack: coneGrid(38, [12, 23]), barrier: barrierGrid(), drum: drumGrid(),
+    cone: creamify(coneGrid(26)), stack: creamify(coneGrid(38, [12, 23])), barrier: creamify(barrierGrid()), drum: creamify(drumGrid()),
     wig: [0, 1, 2, 3].map(f => wigGrid(f)),
   };
   const BOX = {
@@ -286,7 +298,6 @@
     outline(g, 'l');
     return g;
   }
-  const CLOUDS = [bake('cl1', cloudGrid(3)), bake('cl2', cloudGrid(11)), bake('cl3', cloudGrid(29))];
 
   // 5x7 pixel font for HUD, drawn at 2x
   const FONT = {
@@ -338,32 +349,90 @@
     if (G) render(); // keep the frame visible after a resize (matters in ?rec=1, where nothing else redraws)
   }
 
-  // ---------- ground tile: rust line with low craters, dashes and pebbles; far layer: mesa + dome outlines ----------
+  // ---------- world tiles: dithered sky, far red hills, filled rust ground with real craters ----------
   const BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+  const bay = (x, y) => (BAYER[y & 3][x & 3] + 0.5) / 16;
   function bakeGround() {
-    const GW = 600, GH = H - GROUND + 2, g = grid(GW, GH), r = mulberry(SEED ^ 0x51ed);
-    for (let x = 0; x < GW; x++) g[2][x] = 'u';
-    for (let i = 0; i < 6; i++) { // low craters: raised rims and a shallow dip
-      const x0 = 10 + Math.floor(r() * (GW - 40)), len = 6 + Math.floor(r() * 10);
-      for (let x = x0; x < x0 + len; x++) { g[2][x] = null; g[3][x] = 'u'; }
-      g[1][x0 - 2] = 'u'; g[1][x0 - 1] = 'u'; g[2][x0 - 1] = 'u'; g[1][x0 + len] = 'u'; g[1][x0 + len + 1] = 'u'; g[2][x0 + len] = 'u';
+    // sky: four butterscotch bands with dithered seams, a hazy dust band just above the horizon
+    const SKY = ['s1', 's2', 's3', 's4'], sk = grid(W, GROUND + 1);
+    for (let y = 0; y <= GROUND; y++) for (let x = 0; x < W; x++) {
+      const f = Math.min(3, (y / GROUND) * 3.6), i = Math.floor(f), tt = f - i;
+      sk[y][x] = (i < 3 && tt > 0.6 && bay(x, y) < (tt - 0.6) / 0.4) ? SKY[i + 1] : SKY[i];
+      const hzT = (y - (GROUND - 30)) / 30;
+      if (hzT > 0 && bay(x, y) < hzT * 0.75) sk[y][x] = 'hz';
     }
-    for (let i = 0; i < 50; i++) {
-      const x = Math.floor(r() * (GW - 4)), y = 5 + Math.floor(r() * (GH - 9)), len = r() < 0.5 ? 1 : 1 + Math.floor(r() * 3);
-      for (let k = 0; k < len; k++) g[y][x + k] = r() < 0.3 ? 'g' : 'u';
+    tiles.sky = bake('sky' + W + 'x' + H, sk);
+    // far layer: big red rocky hills, flat mesas and crater-rim silhouettes, filled, with a lit rim and shaded slopes
+    const FW = 1200, FH = 64, hgt = new Array(FW).fill(0), r = mulberry(SEED ^ 0xfa7);
+    const bump = (cx, w, hh, kind) => {
+      for (let x = Math.max(0, Math.floor(cx - w)); x < Math.min(FW, cx + w); x++) {
+        const u = (x - cx) / w; let v;
+        if (kind === 'mesa') v = Math.abs(u) < 0.6 ? 1 : Math.max(0, 1 - (Math.abs(u) - 0.6) / 0.4);
+        else if (kind === 'crater') v = Math.max(0, 1 - u * u) * (0.55 + 0.45 * Math.min(1, Math.abs(u) / 0.55) ** 2);  // raised rim, dished middle
+        else v = Math.max(0, Math.cos(u * Math.PI / 2)) ** 1.4;
+        hgt[x] = Math.max(hgt[x], Math.round(hh * v + (r() < 0.25 ? 1 : 0)));
+      }
+    };
+    for (let x = 0; x < FW; x += 70 + Math.floor(r() * 90)) bump(x, 50 + r() * 70, 16 + r() * 20, 'hill');
+    bump(180, 80, 44, 'mesa'); bump(560, 130, 54, 'crater'); bump(820, 60, 34, 'mesa'); bump(1040, 90, 40, 'crater'); bump(380, 45, 28, 'hill');
+    for (let i = 0; i < 40; i++) { const t = i / 40; hgt[FW - 40 + i] = Math.round(hgt[FW - 40 + i] * (1 - t) + hgt[i] * t); }
+    const f = grid(FW, FH);
+    for (let x = 0; x < FW; x++) {
+      const hh = Math.min(FH - 1, hgt[x]); if (!hh) continue;
+      const slope = hgt[(x + 2) % FW] - hgt[(x - 2 + FW) % FW];
+      for (let y = FH - hh; y < FH; y++) {
+        const d = y - (FH - hh);
+        let c = 'f1';
+        if (d === 0) c = 'f0';
+        else if (slope < -1 && d < 8) c = bay(x, y) < 0.7 ? 'f2' : 'f1';     // right-facing slopes in shadow
+        else if (slope > 1 && d < 4) c = 'f0';
+        if (d > 6 && (y % 9 === 3) && bay(x, y) < 0.3) c = 'f2';            // strata
+        f[y][x] = c;
+      }
     }
-    tiles.ground = bake('ground' + H, g);
-    const FW = 960, FH = 30, f = grid(FW, FH);
-    const line = (x0, y0, x1, y1) => { const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)); for (let i = 0; i <= n; i++) { const x = Math.round(x0 + (x1 - x0) * i / n), y = Math.round(y0 + (y1 - y0) * i / n); if (x >= 0 && x < FW && y >= 0 && y < FH) f[y][x] = 'g'; } };
-    for (const [mx, mw, mh] of [[40, 90, 14], [300, 60, 9], [520, 140, 18], [800, 70, 11]]) { // flat-topped mesas
-      const s = Math.round(mh * 0.7);
-      line(mx, FH - 1, mx + s, FH - 1 - mh); line(mx + s, FH - 1 - mh, mx + mw - s, FH - 1 - mh); line(mx + mw - s, FH - 1 - mh, mx + mw, FH - 1);
+    // distant habitat dome + antenna on the mesa
+    const dx = 186, dy = FH - 44;
+    for (let y = -6; y <= 0; y++) for (let x = -9; x <= 9; x++) if (Math.hypot(x, y * 1.4) <= 9) f[dy + y][dx + x] = y === -6 || Math.hypot(x, y * 1.4) > 8 ? 'f0' : 'f2';
+    f[dy - 2][dx - 3] = 'hz'; f[dy - 2][dx + 2] = 'hz';
+    for (let y = dy - 18; y < dy; y++) f[y][dx + 13] = 'f2';
+    for (let x = dx + 11; x <= dx + 15; x++) f[dy - 18][x] = 'f2';
+    f[dy - 19][dx + 13] = 'hl';
+    tiles.far = bake('far' + SEED, f);
+    // near ground: filled rust band, highlight edge, rover tracks, sunken craters with raised rims, rocks with shadows
+    const GW = 1200, GH = H - GROUND + 2, g = grid(GW, GH), gr = mulberry(SEED ^ 0x51ed);
+    for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+      if (y < 2) continue;
+      let c = 'r';
+      if (y === 2) c = 'hl';
+      else if (y === 3) c = bay(x, y) < 0.5 ? 'hl' : 'r';
+      else if (y > GH * 0.55) c = bay(x, y) < (y - GH * 0.55) / (GH * 0.45) * 0.8 ? 'R' : 'r';
+      g[y][x] = c;
     }
-    const dx = 420; // tiny distant habitat dome + antenna
-    for (let a = 0; a <= 60; a++) { const t = Math.PI * a / 60; f[Math.round(FH - 1 - Math.sin(t) * 6)][Math.round(dx + Math.cos(t) * 8)] = 'g'; }
-    for (let y = FH - 15; y < FH - 6; y++) f[y][dx + 12] = 'g';
-    f[FH - 16][dx + 11] = 'g'; f[FH - 16][dx + 13] = 'g';
-    tiles.far = bake('far', f);
+    const T0 = Math.round(GH * 0.62);
+    for (const ty of [T0, T0 + 4]) for (let x = 0; x < GW; x++) if ((x >> 1) % 3 !== 0) { g[ty][x] = 'R'; g[ty + 1][x] = 'RR'; }  // rover tracks
+    for (let x = 0; x < GW; x++) if ((x >> 1) % 3 === 0) { g[T0 - 1][x] = 'hl'; g[T0 + 3][x] = 'hl'; }
+    const crater = (cx, cy, rx) => {
+      const ry = Math.max(3, rx * 0.36);
+      for (let y = Math.floor(cy - ry - 2); y <= cy + ry + 2; y++) for (let x = Math.floor(cx - rx - 3); x <= cx + rx + 3; x++) {
+        if (y < 4 || y >= GH || x < 0 || x >= GW) continue;
+        const u = (x - cx) / rx, v = (y - cy) / ry, d = Math.sqrt(u * u + v * v);
+        if (d < 0.86) {                       // bowl: shadowed far (upper-left) wall, lit near wall
+          const lit = u * 0.6 + v * 0.8;
+          g[y][x] = lit < -0.2 ? (bay(x, y) < 0.7 ? 'RR' : 'R') : lit < 0.25 ? 'R' : (bay(x, y) < 0.5 ? 'r' : 'R');
+        } else if (d < 1.12) {                // raised rim: lit top edge, shadowed lower edge
+          g[y][x] = v < 0.1 ? 'hl' : (bay(x, y) < 0.6 ? 'R' : 'r');
+        } else if (d < 1.35 && v > 0.2 && bay(x, y) < 0.35) g[y][x] = 'R';   // ejecta shadow
+      }
+    };
+    let cx = 60;
+    while (cx < GW - 60) { const rx = 9 + Math.floor(gr() * 20); crater(cx, 12 + rx * 0.4 + Math.floor(gr() * (GH - 24 - rx * 0.8)), rx); if (gr() < 0.5) crater(cx + rx + 30 + gr() * 40, 10 + Math.floor(gr() * 14), 4 + Math.floor(gr() * 4)); cx += 200 + Math.floor(gr() * 200); }
+    for (let i = 0; i < 60; i++) {           // rocks and pebbles with a lit top and a shadow to the right
+      const x = Math.floor(gr() * (GW - 6)), y = 5 + Math.floor(gr() * (GH - 8)), sz = gr() < 0.75 ? 1 : 2 + Math.floor(gr() * 2);
+      if (g[y][x] === 'RR' || g[y][x] === 'R' && gr() < 0.5) continue;
+      for (let yy = 0; yy < sz; yy++) for (let xx = 0; xx < sz + 1; xx++) if (y + yy < GH && x + xx < GW) g[y + yy][x + xx] = yy === 0 ? 'hl' : 'r';
+      for (let xx = 1; xx <= sz + 1; xx++) if (y + sz < GH && x + xx < GW) g[y + sz][x + xx] = 'RR';
+    }
+    tiles.ground = bake('ground' + H + 'x' + SEED, g);
     tiles.w = W;
   }
 
@@ -439,13 +508,13 @@
     G = {
       mode: intro ? 'intro' : 'play', frame: 0, playFrames: 0, deadFrames: 0, introFrames: 0,
       hero: newHero(), speed: SPEED0, dist: 0, bgDist: 0, score: 0, lastMilestone: 0,
-      obstacles: [], lastTypes: [], parts: [], blobs: [], clouds: [],
+      obstacles: [], lastTypes: [], parts: [], blobs: [], devils: [],
       night: false, nightFrames: 0, nextNight: NIGHT_EVERY, stars: [], moon: 0,
       flash: 0, jumpHeld: false, duckHeld: false, plan: null, squash: 0, shake: 0, boom: null,
       hitStop: 0, hitFlash: 0, knock: 0, knockV: 0, tilt: 0, jumpAge: 0, retro: 0,
     };
     const r = mulberry(SEED ^ 0xc10d);
-    for (let i = 0; i < 4; i++) G.clouds.push({ x: 40 + i * 170 + r() * 80, y: 18 + Math.floor(r() * (GROUND - 110)), i: i % 3 });
+    G.devils.push({ x: 260 + r() * 150, h: 16 + Math.floor(r() * 8), ph: r() * 6 });
     makeStars();
   }
   function makeStars() {
@@ -712,10 +781,9 @@
     if (G.flash > 0) G.flash--;
     if (G.night) { G.nightFrames--; if (G.nightFrames <= 0) G.night = false; }
 
-    for (const c of G.clouds) {
-      c.x -= sp * 0.2;
-      if (c.x < -50) { c.x = W + 20 + fxRng() * 220; c.y = 18 + Math.floor(fxRng() * (GROUND - 110)); c.i = Math.floor(fxRng() * 3); }
-    }
+    for (const dv of G.devils) { dv.x -= sp * 0.1 + 0.15; dv.ph += 0.25; }
+    G.devils = G.devils.filter(dv => dv.x > -20);
+    if (!G.devils.length && fxRng() < 0.004) G.devils.push({ x: W + 10, h: 14 + Math.floor(fxRng() * 12), ph: 0 });
     updateParts(sp); updateBlobs(sp);
   }
   function landDust(k) {
@@ -756,7 +824,7 @@
   }
 
   // ---------- render ----------
-  const PCOL = { ink: PAL.k, grey: PAL.u };
+  const PCOL = { ink: PAL.RR, grey: PAL.hl };
   function text(str, x, y, color, sc = 2) {
     b.fillStyle = color;
     for (const ch of str) {
@@ -768,29 +836,24 @@
   // night is the game's own palette fade: the five world tones step toward the night set (no wipe, no alpha dissolve)
   const nightT = () => Math.round(nightMix * (NSTEP - 1)) / (NSTEP - 1);
   const pack = c => (c[0] << 16) | (c[1] << 8) | c[2];
-  const TONE = new Map([['w', 'w'], ['s', 'w'], ['k', 'k'], ['u', 'u'], ['g', 'g'], ['l', 'l']].map(([k, n]) => [pack(RGB[k]), n]));
-  const skyNight = y => y <= GROUND ? lerpC(SKY_TOP, SKY_HOR, Math.pow(Math.max(0, y) / GROUND, 1.4)) : SOIL_N;
+  const TONE = new Map(Object.keys(NIGHTC).map(k => [pack(RGB[k]), k]));
   // mid-fade warmth: push the in-between steps toward a rusty dusk instead of a grey midpoint
   function dusk(c, t) {
-    const k = Math.sin(Math.PI * t), l = (c[0] + c[1] + c[2]) / 3, sat = 1 + 0.9 * k;
-    return [Math.min(255, Math.max(0, Math.round(l + (c[0] - l) * sat + 34 * k))), Math.min(255, Math.max(0, Math.round(l + (c[1] - l) * sat - 4 * k))), Math.min(255, Math.max(0, Math.round(l + (c[2] - l) * sat - 22 * k)))];
+    const k = Math.sin(Math.PI * t), l = (c[0] + c[1] + c[2]) / 3, sat = 1 + 0.15 * k;
+    return [Math.min(255, Math.max(0, Math.round(l + (c[0] - l) * sat + 8 * k))), Math.min(255, Math.max(0, Math.round(l + (c[1] - l) * sat - 2 * k))), Math.min(255, Math.max(0, Math.round(l + (c[2] - l) * sat - 4 * k)))];
   }
   function nightPass(t) {
     if (t <= 0) return;
-    const img = b.getImageData(0, 0, W, H), d = img.data;
-    const mixed = {}; for (const k of ['k', 'u', 'g', 'l']) mixed[k] = dusk(lerpC(RGB[k], NIGHT[k], t), t);
-    for (let y = 0; y < H; y++) {
-      const bg = dusk(lerpC(RGB.w, skyNight(y), t), t);
-      for (let x = 0, i = y * W * 4; x < W; x++, i += 4) {
-        const tone = TONE.get((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]); if (!tone) continue;
-        const c = tone === 'w' ? bg : mixed[tone];
-        d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2];
-      }
+    const img = b.getImageData(0, 0, W, H), d = img.data, M = {};
+    for (const k in NIGHT) M[k] = dusk(lerpC(RGB[k], NIGHT[k], t), t);
+    for (let i = 0; i < d.length; i += 4) {
+      const tone = TONE.get((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]); if (!tone) continue;
+      const c = M[tone]; d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2];
     }
     b.putImageData(img, 0, 0);
   }
   const VAPC = { k: RGB.k, g: hex('#c4bcb6'), l: hex('#ece8e4'), w: RGB.w, x: RGB.x };
-  const DUSTC = { k: RGB.k, g: RGB.u, l: RGB.l, w: RGB.w, x: RGB.x };
+  const DUSTC = { k: RGB.R, g: RGB.hl, l: RGB.dl, w: RGB.hz, x: RGB.dl };
   const vapor0 = kind => kind === 'dust' ? DUSTC : VAPC;
   function drawBlobs(kind, nightAware, ne) {
     const list = [];
@@ -850,24 +913,37 @@
   function render() {
     if (tiles.w !== W || !tiles.ground) bakeGround();
     const t = nightT(), ne = null;
-    const pageBg = css(dusk(lerpC(RGB.w, SKY_TOP, t), t));
-    document.body.style.background = pageBg;
-    document.documentElement.style.setProperty('--fg', css(lerpC(RGB.k, NIGHT.k, t)));
-    document.documentElement.style.setProperty('--muted', css(lerpC(hex('#9a6a52'), hex('#b07a64'), t)));
+    const pageBg = css(dusk(lerpC(RGB.s1, NIGHT.s1, t), t));
+    // the page continues the world: sky above the band, ground below it (matters on tall phone screens)
+    const soil = css(dusk(lerpC(RGB.R, NIGHT.R, t), t)), gy = Math.round(cv.getBoundingClientRect().bottom);
+    const bgCss = `linear-gradient(to bottom, ${pageBg} 0, ${pageBg} ${gy - 2}px, ${soil} ${gy - 2}px, ${soil} 100%)`;
+    if (bgCss !== render.bg) { document.body.style.background = bgCss; render.bg = bgCss; }
+    document.documentElement.style.setProperty('--fg', css(lerpC(RGB.b, NIGHT.b, t)));
+    document.documentElement.style.setProperty('--muted', css(lerpC(hex('#7a4a30'), hex('#c09a80'), t)));
 
     const f = G.frame, h = G.hero;
-    b.fillStyle = PAL.w; b.fillRect(0, 0, W, H);
-    // small pale sun (fades into the night sky with the palette)
-    const sx0 = Math.round(W * 0.78), sy0 = Math.round(GROUND * 0.24);
-    b.fillStyle = PAL.s;
-    for (let y = -4; y <= 4; y++) for (let x = -4; x <= 4; x++) if (Math.hypot(x, y) <= 4.2) b.fillRect(sx0 + x, sy0 + y, 1, 1);
-    // sparse dust clouds, far mesas + dome
-    for (const c of G.clouds) drawSprite(CLOUDS[c.i], c.x, c.y);
-    const fOff = Math.floor(G.bgDist * 0.12) % 960;
-    for (let x = -fOff; x < W; x += 960) drawSprite(tiles.far, x, GROUND - 30);
+    drawSprite(tiles.sky, 0, 0);
+    // small pale-blue setting sun with a warm halo, low over the hills
+    const sx0 = Math.round(W * 0.8), sy0 = GROUND - 44;
+    for (let y = -9; y <= 9; y++) for (let x = -9; x <= 9; x++) {
+      const dd = Math.hypot(x, y);
+      if (dd <= 3.6) { b.fillStyle = PAL.p; b.fillRect(sx0 + x, sy0 + y, 1, 1); }
+      else if (dd <= 8 && bay(sx0 + x, sy0 + y) < (8 - dd) / 6) { b.fillStyle = PAL.p2; b.fillRect(sx0 + x, sy0 + y, 1, 1); }
+    }
+    // far red hills + mesas + crater rims, dust devils drifting far away, horizon haze over the hill bases
+    const fOff = Math.floor(G.bgDist * 0.1) % 1200;
+    for (let x = -fOff; x < W; x += 1200) drawSprite(tiles.far, x, GROUND - 63);
+    for (const dv of G.devils) for (let yy = 0; yy < dv.h; yy++) {
+      const wdt = 1 + yy * 0.32, cx = dv.x + Math.sin(yy * 0.45 + dv.ph) * 1.6;
+      for (let xx = Math.floor(cx - wdt); xx <= cx + wdt; xx++) { const y = GROUND - 2 - yy; if (bay(xx, y + (G.frame >> 2)) < 0.45) { b.fillStyle = PAL.hz; b.fillRect(xx, y, 1, 1); } }
+    }
+    b.fillStyle = PAL.hz;
+    for (let y = GROUND - 7; y < GROUND; y++) for (let x = 0; x < W; x++) if (bay(x, y) < (y - (GROUND - 7)) / 7 * 0.38) b.fillRect(x, y, 1, 1);
     // ground
-    const gOff = Math.floor(G.dist) % 600;
-    for (let x = -gOff; x < W; x += 600) drawSprite(tiles.ground, x, GROUND - 2);
+    const gOff = Math.floor(G.dist) % 1200;
+    for (let x = -gOff; x < W; x += 1200) drawSprite(tiles.ground, x, GROUND - 2);
+    b.fillStyle = PAL.R;
+    for (const o of G.obstacles) if (!o.type.flying) b.fillRect(Math.round(o.x) + 2, GROUND + 1, o.w + 2, 1);
     // obstacles
     for (const o of G.obstacles) {
       if (o.type.flying) {
@@ -880,7 +956,7 @@
     }
     // airborne shadow dash
     const air = GROUND_Y - h.y;
-    if (air > 2) { const shw = Math.max(18, 60 - air * 0.45); b.fillStyle = PAL.u; b.fillRect(Math.round(HERO_X + 40 - shw / 2), GROUND + 2, Math.round(shw), 1); }
+    if (air > 2) { const shw = Math.max(18, 60 - air * 0.45); b.fillStyle = PAL.R; b.fillRect(Math.round(HERO_X + 40 - shw / 2), GROUND + 2, Math.round(shw), 1); }
     // particles + landing dust
     for (const p of G.parts) {
       const k = p.life / p.max, s = Math.max(1, Math.round(p.size * (1 - k * 0.5)));
@@ -899,14 +975,14 @@
       const sx = W - HUDM - 58;
       let show = true, val = G.score;
       if (G.flash > 0) { val = G.lastMilestone; show = Math.floor(G.flash / 8) % 2 === 1; }
-      if (show) text(pad(val), sx, HUDM, PAL.k);
-      if (hiScore > 0) { text('HI', sx - 12 * 9, HUDM, PAL.g); text(pad(hiScore), sx - 12 * 6.5, HUDM, PAL.g); }
+      if (show) text(pad(val), sx, HUDM, PAL.b);
+      if (hiScore > 0) { text('HI', sx - 12 * 9, HUDM, PAL.b2); text(pad(hiScore), sx - 12 * 6.5, HUDM, PAL.b2); }
     }
     if (G.mode === 'over' && G.deadFrames >= 18) {   // GAME OVER lands ~0.3 s after the impact
       const gx = Math.round(W / 2 - (9 * 12 - 2) / 2), gy = Math.round(GROUND * 0.34);
-      text('GAME OVER', gx, gy, PAL.k);
+      text('GAME OVER', gx, gy, PAL.b);
       const rx = Math.round(W / 2), ry = gy + 40;
-      b.fillStyle = PAL.k;
+      b.fillStyle = PAL.b;
       for (let y = -11; y <= 11; y++) for (let x = -11; x <= 11; x++) {
         const d = Math.hypot(x, y), a = Math.atan2(y, x);
         if (d >= 7.5 && d <= 10.5 && !(a > -1.25 && a < -0.15)) b.fillRect(rx + x, ry + y, 1, 1);
